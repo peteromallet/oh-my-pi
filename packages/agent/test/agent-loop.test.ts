@@ -2904,6 +2904,216 @@ describe("agentLoop event-driven steering watch", () => {
 		expect(waitCalls).toBeGreaterThan(0);
 	});
 
+	it("soft-aborts a backgroundable tool when a targeted background request wakes the event-driven watcher", async () => {
+		const executed: string[] = [];
+		let backgroundObserved: AbortSignal | undefined;
+		const toolStarted = Promise.withResolvers<void>();
+		let toolStartedFlag = false;
+		void toolStarted.promise.then(() => {
+			toolStartedFlag = true;
+		});
+		let wake: (() => void) | undefined;
+		const toolSchema = type({ value: "string" });
+		const tool: AgentTool<typeof toolSchema> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			concurrency: "exclusive",
+			interruptible: false,
+			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+				executed.push(params.value);
+				// `toolCall` is app-merged onto AgentToolContext (coding-agent's
+				// ToolContextStore); the agent package's tests see it via this
+				// structural projection.
+				const toolCall = (ctx as { toolCall?: { backgroundSignal?: AbortSignal } } | undefined)?.toolCall;
+				backgroundObserved = toolCall?.backgroundSignal;
+				toolStarted.resolve();
+				const waiter = Promise.withResolvers<void>();
+				if (backgroundObserved?.aborted) waiter.resolve();
+				else backgroundObserved?.addEventListener("abort", () => waiter.resolve(), { once: true });
+				await waiter.promise;
+				return { content: [{ type: "text", text: `ok:${params.value}` }], details: { value: params.value } };
+			},
+		};
+		const context: AgentContext = { systemPrompt: [""], messages: [], tools: [tool] };
+		const mock = createMockModel({
+			responses: [
+				{
+					content: [{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } }],
+				},
+				{ content: ["done"] },
+			],
+		});
+		let backgroundChecks = 0;
+		const config: AgentLoopConfig = {
+			model: mock.model,
+			convertToLlm: identityConverter,
+			interruptMode: "immediate",
+			// One-shot request targeting this batch's tool call, visible only
+			// after the tool is running (the watcher's startup check must not
+			// consume it). The interactive Agent wakes the event-driven watcher
+			// via #notifySteeringWaiters (requestBackground) — driven by `wake`.
+			hasBackgroundRequest: () => {
+				if (!toolStartedFlag) return undefined;
+				backgroundChecks++;
+				return backgroundChecks === 1 ? ["tool-1"] : undefined;
+			},
+			// hasSteeringMessages is what arms the event-driven watcher
+			// (eventDrivenSteeringWatch requires it); without it the interval
+			// timer would drive detection and `wake` would be a silent no-op.
+			hasSteeringMessages: () => ({ queued: false }),
+			waitForSteeringMessages: async signal => {
+				if (signal?.aborted) return;
+				const waiter = Promise.withResolvers<void>();
+				wake = waiter.resolve;
+				signal?.addEventListener("abort", () => waiter.resolve(), { once: true });
+				await waiter.promise;
+			},
+			// Mirror the real wiring: the loop's batch payload becomes the
+			// app-visible `ctx.toolCall` (ToolContextStore passes it through).
+			getToolContext: tc => ({ toolCall: tc }),
+		};
+
+		const stream = agentLoop([createUserMessage("start")], context, config, undefined, mock.stream);
+		const drain = (async () => {
+			for await (const _event of stream) {
+				// drain
+			}
+		})();
+		await toolStarted.promise;
+		// The event-driven watcher must actually be parked on the waiter
+		// (not silently degraded to timer polling) before we simulate
+		// Agent.requestBackground()'s notify.
+		expect(wake).toBeDefined();
+		wake?.();
+		await drain;
+
+		expect(executed).toEqual(["first"]);
+		expect(backgroundObserved?.aborted).toBe(true);
+		expect(backgroundChecks).toBe(1);
+	});
+
+	it("consumes a mismatched background request so it cannot abort a later batch's wait", async () => {
+		const executed: string[] = [];
+		const observed: AbortSignal[] = [];
+		const toolSchema = type({ value: "string" });
+		const tool: AgentTool<typeof toolSchema> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			concurrency: "exclusive",
+			interruptible: false,
+			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+				executed.push(params.value);
+				const toolCall = (ctx as { toolCall?: { backgroundSignal?: AbortSignal } } | undefined)?.toolCall;
+				observed.push(toolCall?.backgroundSignal as AbortSignal);
+				const waiter = Promise.withResolvers<void>();
+				const timer = setTimeout(() => waiter.resolve(), 600);
+				toolCall?.backgroundSignal?.addEventListener("abort", () => waiter.resolve(), { once: true });
+				await waiter.promise;
+				clearTimeout(timer);
+				return { content: [{ type: "text", text: `ok:${params.value}` }], details: { value: params.value } };
+			},
+		};
+		const context: AgentContext = { systemPrompt: [""], messages: [], tools: [tool] };
+		const mock = createMockModel({
+			responses: [
+				{
+					content: [{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } }],
+				},
+				{
+					content: [{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second" } }],
+				},
+				{ content: ["done"] },
+			],
+		});
+		let backgroundRequestIssued = false;
+		const config: AgentLoopConfig = {
+			model: mock.model,
+			convertToLlm: identityConverter,
+			interruptMode: "immediate",
+			// One-shot request targeting the SECOND batch's call. Batch 1's poll
+			// must consume it (mismatch → discard); if it bled into batch 2,
+			// batch 2's fresh controller would abort tool-2's signal and this
+			// test would fail.
+			hasBackgroundRequest: () => {
+				if (backgroundRequestIssued) return undefined;
+				backgroundRequestIssued = true;
+				return ["tool-2"];
+			},
+			getToolContext: tc => ({ toolCall: tc }),
+		};
+
+		const stream = agentLoop([createUserMessage("start")], context, config, undefined, mock.stream);
+		for await (const _event of stream) {
+			// drain
+		}
+
+		expect(executed).toEqual(["first", "second"]);
+		expect(observed).toHaveLength(2);
+		expect(observed[0]?.aborted ?? false).toBe(false);
+		expect(observed[1]?.aborted ?? false).toBe(false);
+	});
+
+	it("fires both soft signals when a steer and a background request arrive together", async () => {
+		const executed: string[] = [];
+		let steeringObserved: AbortSignal | undefined;
+		let backgroundObserved: AbortSignal | undefined;
+		const toolStarted = Promise.withResolvers<void>();
+		const toolSchema = type({ value: "string" });
+		const tool: AgentTool<typeof toolSchema> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			concurrency: "exclusive",
+			interruptible: false,
+			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+				executed.push(params.value);
+				const toolCall = (
+					ctx as { toolCall?: { steeringSignal?: AbortSignal; backgroundSignal?: AbortSignal } } | undefined
+				)?.toolCall;
+				steeringObserved = toolCall?.steeringSignal;
+				backgroundObserved = toolCall?.backgroundSignal;
+				toolStarted.resolve();
+				const waiter = Promise.withResolvers<void>();
+				const timer = setTimeout(() => waiter.resolve(), 800);
+				backgroundObserved?.addEventListener("abort", () => waiter.resolve(), { once: true });
+				await waiter.promise;
+				clearTimeout(timer);
+				return { content: [{ type: "text", text: `ok:${params.value}` }], details: { value: params.value } };
+			},
+		};
+		const context: AgentContext = { systemPrompt: [""], messages: [], tools: [tool] };
+		const mock = createMockModel({
+			responses: [
+				{
+					content: [{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } }],
+				},
+				{ content: ["done"] },
+			],
+		});
+		const config: AgentLoopConfig = {
+			model: mock.model,
+			convertToLlm: identityConverter,
+			interruptMode: "immediate",
+			hasSteeringMessages: () => ({ queued: true, source: "user" }),
+			hasBackgroundRequest: () => ["tool-1"],
+			getToolContext: tc => ({ toolCall: tc }),
+		};
+
+		const stream = agentLoop([createUserMessage("start")], context, config, undefined, mock.stream);
+		for await (const _event of stream) {
+			// drain
+		}
+
+		expect(executed).toEqual(["first"]);
+		expect(steeringObserved?.aborted).toBe(true);
+		expect(backgroundObserved?.aborted).toBe(true);
+	});
+
 	it("does not miss steering queued between the state check and subscription", async () => {
 		const executed: string[] = [];
 		let steerReady = false;

@@ -1698,6 +1698,8 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				session ? session.trackEvalExecution(execution, abortController) : execution,
 			getSessionId: () => sessionManager.getSessionId?.() ?? null,
 			isDisposed: () => session?.isDisposed ?? false,
+			registerBackgroundableBashWait: toolCallId => session?.registerBackgroundableBashWait(toolCallId),
+			unregisterBackgroundableBashWait: toolCallId => session?.unregisterBackgroundableBashWait(toolCallId),
 			getHindsightSessionState: () => session?.getHindsightSessionState(),
 			getMnemopiSessionState: () => session?.getMnemopiSessionState(),
 			getAgentId: () => resolvedAgentId,

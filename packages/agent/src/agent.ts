@@ -372,6 +372,16 @@ export class Agent {
 	#steeringQueue: AgentMessage[] = [];
 	#followUpQueue: AgentMessage[] = [];
 	#steeringWaiters = new Set<() => void>();
+	/**
+	 * User-initiated "move the current foreground wait to the background"
+	 * request (keybinding, no message content), scoped to the tool-call ids of
+	 * the waits it targets. Consumed by the loop's per-batch poll (see the run
+	 * config's `hasBackgroundRequest`): it aborts the batch's soft background
+	 * signal only when the batch actually contains one of the targeted calls,
+	 * so a request whose wait already ended can never background a LATER
+	 * batch's command. Cleared at run start as a safety net.
+	 */
+	#backgroundRequestedToolCallIds: string[] = [];
 
 	#steeringMode: "all" | "one-at-a-time";
 	#followUpMode: "all" | "one-at-a-time";
@@ -976,6 +986,22 @@ export class Agent {
 	}
 
 	/**
+	 * Request that the given foreground waits (by tool-call id) move to the
+	 * background (no message content — the running processes keep going as
+	 * background jobs and their tool calls return early). Wakes the in-flight
+	 * tool interrupt watcher exactly like a queued steer, so the loop's
+	 * per-batch poll aborts `ctx.toolCall.backgroundSignal` on the next tick —
+	 * but only for a batch that actually contains one of the targeted calls.
+	 * Safe to call when no run is active: the request is consumed by the next
+	 * run's first poll or cleared at run start.
+	 */
+	requestBackground(toolCallIds: string[]) {
+		if (toolCallIds.length === 0) return;
+		this.#backgroundRequestedToolCallIds = toolCallIds;
+		this.#notifySteeringWaiters();
+	}
+
+	/**
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 * Delivered only when agent has no more tool calls or steering messages.
 	 */
@@ -1293,6 +1319,10 @@ export class Agent {
 
 		// Clear Cursor tool result buffer at start of each run
 		this.#cursorToolResultBuffer = [];
+		// A background request that landed with no batch polling (e.g. pressed
+		// during streaming) must not fire against this run's first tool batch;
+		// the intended batch already consumed it via `hasBackgroundRequest`.
+		this.#backgroundRequestedToolCallIds = [];
 
 		const reasoning = this.#state.thinkingLevel;
 
@@ -1482,6 +1512,16 @@ export class Agent {
 				return { queued: true, source: hasAgentSteering ? "agent" : "system" };
 			},
 			waitForSteeringMessages: signal => this.#waitForSteeringMessages(signal),
+			hasBackgroundRequest: () => {
+				if (this.#backgroundRequestedToolCallIds.length === 0) return undefined;
+				// Consumed on read: the loop aborts the per-batch soft controller
+				// only when the batch contains one of the targeted tool calls, so
+				// a request whose wait already ended cannot background a LATER
+				// batch's command.
+				const toolCallIds = this.#backgroundRequestedToolCallIds;
+				this.#backgroundRequestedToolCallIds = [];
+				return toolCallIds;
+			},
 			hasIrcInterrupts: this.hasIrcInterrupts,
 			getFollowUpMessages: signal => this.#dequeueFollowUpMessagesAfterHooks(signal),
 			getAsideMessages: async () => (await this.#asideMessageProvider?.()) ?? [],

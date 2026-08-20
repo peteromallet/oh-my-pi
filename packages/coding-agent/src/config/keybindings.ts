@@ -18,6 +18,7 @@ import { JSONC, YAML } from "bun";
  */
 interface AppKeybindings {
 	"app.interrupt": true;
+	"app.background": true;
 	"app.clear": true;
 	"app.exit": true;
 	"app.suspend": true;
@@ -80,6 +81,15 @@ export const KEYBINDINGS = {
 	"app.interrupt": {
 		defaultKeys: "escape",
 		description: "Interrupt current operation",
+	},
+	"app.background": {
+		// Ctrl+B is taken by the editor's cursor-left motion, and Ctrl+Shift+B
+		// is indistinguishable from Ctrl+B on legacy terminals (shift is not
+		// conveyed for control chars without the kitty keyboard protocol).
+		// Ctrl+Alt+B is distinct across terminals. Only meaningful while a
+		// managed foreground bash wait is active.
+		defaultKeys: "ctrl+alt+b",
+		description: "Move current foreground process to background",
 	},
 	"app.clear": {
 		defaultKeys: "ctrl+c",

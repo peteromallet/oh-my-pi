@@ -34,6 +34,7 @@ export function buildHotkeysMarkdown(bindings: HotkeysMarkdownBindings): string 
 		"|-----|--------|",
 		"| `Tab` | Path completion / accept autocomplete |",
 		`| \`${appKey(bindings, "app.interrupt")}\` | Cancel autocomplete / interrupt active work |`,
+		`| \`${appKey(bindings, "app.background")}\` | Move current foreground process to background |`,
 		`| \`${appKey(bindings, "app.clear")}\` | Clear editor (first) / exit (second) |`,
 		`| \`${appKey(bindings, "app.exit")}\` | Exit (when editor is empty) |`,
 		`| \`${appKey(bindings, "app.suspend")}\` | Suspend to background |`,

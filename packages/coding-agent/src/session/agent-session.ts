@@ -499,6 +499,17 @@ export class AgentSession {
 	#toolChoiceQueue = new ToolChoiceQueue();
 
 	readonly #bash: BashRunner;
+	/**
+	 * Tool-call ids of managed foreground bash waits currently backgroundable
+	 * via the user's background key. Populated by the bash tool for the
+	 * duration of each managed foreground wait.
+	 */
+	#backgroundableBashWaits = new Set<string>();
+	/** Fired whenever the set of backgroundable waits changes (register/unregister). */
+	#onBackgroundableWaitsChange?: () => void;
+	#notifyBackgroundableWaitsChange(): void {
+		this.#onBackgroundableWaitsChange?.();
+	}
 
 	readonly #eval: EvalRunner;
 	/**
@@ -7157,6 +7168,41 @@ export class AgentSession {
 	/** Cancel running bash commands. */
 	abortBash(): void {
 		this.#bash.abort();
+	}
+
+	/**
+	 * Request that the currently running foreground bash commands move to the
+	 * background (they keep running as async jobs; the tool calls return
+	 * immediately). No-op when no managed foreground wait is active. Only
+	 * meaningful on the managed auto-background path — a direct foreground
+	 * call ignores it.
+	 */
+	requestBashBackground(): boolean {
+		if (this.#backgroundableBashWaits.size === 0) return false;
+		this.agent.requestBackground([...this.#backgroundableBashWaits]);
+		return true;
+	}
+
+	/** Track a managed foreground bash wait the background key can target. */
+	registerBackgroundableBashWait(toolCallId: string): void {
+		this.#backgroundableBashWaits.add(toolCallId);
+		this.#notifyBackgroundableWaitsChange();
+	}
+
+	/** Stop tracking a managed foreground bash wait once it settles. */
+	unregisterBackgroundableBashWait(toolCallId: string): void {
+		this.#backgroundableBashWaits.delete(toolCallId);
+		this.#notifyBackgroundableWaitsChange();
+	}
+
+	/** Whether any managed foreground bash wait is currently backgroundable. */
+	hasBackgroundableBashWait(): boolean {
+		return this.#backgroundableBashWaits.size > 0;
+	}
+
+	/** Register a listener fired when the set of backgroundable waits changes. */
+	setOnBackgroundableWaitsChange(listener: (() => void) | undefined): void {
+		this.#onBackgroundableWaitsChange = listener;
 	}
 
 	/** Whether a bash command is currently running */

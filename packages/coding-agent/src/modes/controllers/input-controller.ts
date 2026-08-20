@@ -179,6 +179,7 @@ export class InputController {
 	#btwBranchListenerInstalled = false;
 	#btwCopyListenerInstalled = false;
 	#expandToolsListenerInstalled = false;
+	#backgroundKeyListenerInstalled = false;
 	// Tap counter for the double-← gesture; reset whenever a quiet gap
 	// (>= LEFT_DOUBLE_TAP_MAX_GAP_MS) starts a fresh sequence. See
 	// #detectLeftDoubleTap.
@@ -295,6 +296,22 @@ export class InputController {
 				if (this.ctx.ui.getFocused() instanceof TreeSelectorComponent && matchesKey(data, "ctrl+o"))
 					return undefined;
 				this.toggleToolOutputExpansion();
+				return { consume: true };
+			});
+		}
+		if (!this.#backgroundKeyListenerInstalled) {
+			this.#backgroundKeyListenerInstalled = true;
+			// `app.background` (Ctrl+Alt+B) moves the currently running
+			// foreground bash command(s) to the background — the processes keep
+			// running as async jobs and the tool calls return immediately.
+			// Only fires while a managed foreground bash wait is actually
+			// active (the authoritative state the bash tool maintains); the
+			// editor keeps receiving the key otherwise.
+			this.ctx.ui.addInputListener(data => {
+				if (!this.ctx.keybindings.matches(data, "app.background")) return undefined;
+				if (this.ctx.ui.hasOverlay()) return undefined;
+				if (!this.ctx.session.hasBackgroundableBashWait()) return undefined;
+				this.ctx.session.requestBashBackground();
 				return { consume: true };
 			});
 		}

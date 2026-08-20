@@ -1,0 +1,144 @@
+#!/bin/bash
+# agent — run, list, and scaffold omp agents (markdown agent definitions).
+#
+# An omp agent is a markdown file: YAML frontmatter (name, description, tools,
+# model, ...) + a system prompt body. Discovery order for `run`:
+#   project  ./.omp/agents/<name>.md
+#   user     ~/.omp/agent/agents/<name>.md
+#   bundled  materialized on first use via `omp agents unpack --user`
+#
+# `run` strips the frontmatter and launches omp with the prompt body via
+# --system-prompt. With a message argument it runs one-shot print mode;
+# without one it opens the interactive TUI, so the agent is a long-lived
+# operator you can talk to and resume (pass --resume after the name).
+#
+# See docs/agents.md in the omp checkout for the full guide.
+set -euo pipefail
+
+OMP_BIN="${OMP_BIN:-omp}"
+USER_AGENT_DIR="${HOME}/.omp/agent/agents"
+PROJECT_AGENT_DIR=".omp/agents"
+PROMPT_CACHE_DIR="${HOME}/.omp/agent/.prompts"
+
+usage() {
+	cat <<'EOF'
+usage: agent <command> [args]
+
+commands:
+  list                     list discoverable agents (project + user)
+  run <name> [args...]     run an agent; with a message arg -> one-shot print
+                           mode, without -> interactive TUI; args starting
+                           with '-' are passed through to omp verbatim
+  new <name> [desc]        scaffold a new agent into ~/.omp/agent/agents/
+  unpack                   materialize bundled agents (omp agents unpack --user)
+EOF
+}
+
+frontmatter_strip() {
+	# Drop a leading YAML frontmatter block (--- ... ---), keep the body.
+	awk 'BEGIN { skip = 0 } /^---[[:space:]]*$/ { skip++; next } skip < 2 { next } { print }' "$1"
+}
+
+agent_description() {
+	# Pull the description line out of a frontmatter block, if present.
+	awk '/^---[[:space:]]*$/ { in_fm = !in_fm; next } in_fm && /^description:[[:space:]]*/ { sub(/^description:[[:space:]]*/, ""); print; exit }' "$1"
+}
+
+unpack_bundled() {
+	"$OMP_BIN" agents unpack --user >/dev/null 2>&1 || true
+}
+
+find_agent() {
+	local name="$1" path=""
+	path="${PROJECT_AGENT_DIR}/${name}.md"
+	if [ -f "$path" ]; then printf '%s\n' "$path"; return 0; fi
+	path="${USER_AGENT_DIR}/${name}.md"
+	if [ -f "$path" ]; then printf '%s\n' "$path"; return 0; fi
+	# Fall back to bundled agents (materializes them into the user dir).
+	unpack_bundled
+	path="${USER_AGENT_DIR}/${name}.md"
+	if [ -f "$path" ]; then printf '%s\n' "$path"; return 0; fi
+	return 1
+}
+
+cmd_list() {
+	unpack_bundled
+	local dir name desc scope="" seen=""
+	for dir in "${PROJECT_AGENT_DIR}" "${USER_AGENT_DIR}"; do
+		[ -d "$dir" ] || continue
+		for file in "$dir"/*.md; do
+			[ -f "$file" ] || continue
+			name=$(basename "$file" .md)
+			case "$seen" in *"|$name|"*) continue ;; esac
+			seen="${seen}|${name}|"
+			if [ "$dir" = "${PROJECT_AGENT_DIR}" ]; then scope="project"; else scope="user"; fi
+			desc=$(agent_description "$file")
+			printf '%-18s %-8s %s\n' "$name" "$scope" "$desc"
+		done
+	done
+}
+
+cmd_new() {
+	local name="$1" desc="${2:-}"
+	if [ -z "$name" ]; then
+		echo "agent: new requires a name" >&2
+		exit 2
+	fi
+	if [ -e "${USER_AGENT_DIR}/${name}.md" ]; then
+		echo "agent: ${USER_AGENT_DIR}/${name}.md already exists" >&2
+		exit 2
+	fi
+	mkdir -p "$USER_AGENT_DIR"
+	# Quoted template + substitution (no heredoc expansion: bash 3.2 mis-scans
+	# apostrophes inside ${var:-default} words in unquoted heredocs).
+	tmpl='---
+name: __NAME__
+description: __DESC__
+---
+
+You are __NAME__. __DESC__
+'
+	[ -n "$desc" ] || desc="Describe what this agent does and when to use it."
+	content="${tmpl//__NAME__/$name}"
+	content="${content//__DESC__/$desc}"
+	printf '%s\n' "$content" >"${USER_AGENT_DIR}/${name}.md"
+	echo "agent: wrote ${USER_AGENT_DIR}/${name}.md"
+}
+
+cmd_run() {
+	local name="$1"
+	shift || true
+	local file
+	file=$(find_agent "$name") || {
+		echo "agent: no agent named '$name' (tried ./.omp/agents, ~/.omp/agent/agents, bundled)" >&2
+		exit 2
+	}
+	mkdir -p "$PROMPT_CACHE_DIR"
+	frontmatter_strip "$file" >"${PROMPT_CACHE_DIR}/${name}.md"
+	if [ "$#" -eq 0 ]; then
+		exec "$OMP_BIN" --system-prompt "${PROMPT_CACHE_DIR}/${name}.md"
+	fi
+	if [[ "$1" == -* ]]; then
+		exec "$OMP_BIN" --system-prompt "${PROMPT_CACHE_DIR}/${name}.md" "$@"
+	fi
+	exec "$OMP_BIN" --system-prompt "${PROMPT_CACHE_DIR}/${name}.md" --print "$*"
+}
+
+cmd="${1:-}"
+[ -n "$cmd" ] || { usage; exit 2; }
+shift || true
+
+case "$cmd" in
+list) cmd_list ;;
+run)
+	[ "$#" -ge 1 ] || { usage; exit 2; }
+	cmd_run "$@"
+	;;
+new)
+	[ "$#" -ge 1 ] || { usage; exit 2; }
+	cmd_new "$@"
+	;;
+unpack) "$OMP_BIN" agents unpack --user ;;
+-h | --help) usage ;;
+*) echo "agent: unknown command '$cmd'" >&2; usage; exit 2 ;;
+esac

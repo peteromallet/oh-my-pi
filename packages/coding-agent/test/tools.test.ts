@@ -1612,6 +1612,84 @@ function b() {
 			await asyncJobManager.dispose();
 		});
 
+		it("backgrounds a running command when the background signal fires mid-wait", async () => {
+			const asyncJobManager = new AsyncJobManager({});
+			const registrations: string[] = [];
+			const registered = Promise.withResolvers<void>();
+			const autoBackgroundBashTool = wrapToolWithMetaNotice(
+				new BashTool(
+					createTestToolSession(
+						testDir,
+						Settings.isolated({
+							"bash.autoBackground.enabled": true,
+							// High threshold: only the background signal can background this.
+							"bash.autoBackground.thresholdMs": 60_000,
+						}),
+						{
+							getSessionId: () => "test-session",
+							asyncJobManager,
+							registerBackgroundableBashWait: toolCallId => {
+								registrations.push(toolCallId);
+								registered.resolve();
+							},
+							unregisterBackgroundableBashWait: toolCallId => {
+								registrations.push(`-${toolCallId}`);
+							},
+						},
+					),
+				),
+			);
+
+			// Deterministic completion gate: the command polls for a flag file,
+			// so "running" and "completed" are never raced against a fixed
+			// sleep and the job's async start (which can lag the background
+			// return) cannot lose the release — the file persists once written.
+			const gate = path.join(testDir, "bg-gate-go");
+			fs.rmSync(gate, { force: true });
+			const background = new AbortController();
+			const resultPromise = autoBackgroundBashTool.execute(
+				"test-call-bg-background",
+				{ command: `until [ -f ${gate} ]; do sleep 0.05; done; echo released` },
+				undefined,
+				undefined,
+				{
+					...createTestToolContext([]),
+					toolCall: {
+						batchId: "batch-1",
+						index: 0,
+						total: 1,
+						toolCalls: [{ id: "test-call-bg-background", name: "bash" }],
+						backgroundSignal: background.signal,
+					},
+				},
+			);
+
+			// Abort only once the wait is registered and in flight — the
+			// pre-aborted shortcut is a different branch and is not what the
+			// mid-wait transition must prove.
+			await registered.promise;
+			background.abort();
+
+			const result = await resultPromise;
+			// The background request detaches the command instead of killing it:
+			// the call returns a running job and the command finishes on its own.
+			expect(result.details?.async?.state).toBe("running");
+			expect(getTextOutput(result)).toContain("Backgrounded via");
+			expect(getTextOutput(result)).toContain("the command keeps running");
+			const jobId = result.details?.async?.jobId;
+			if (!jobId) {
+				throw new Error("expected a background-requested job id");
+			}
+			const job = asyncJobManager.getJob(jobId);
+			expect(job?.status).toBe("running");
+			await Bun.write(gate, "release");
+			await job?.promise;
+			expect(asyncJobManager.getJob(jobId)?.status).toBe("completed");
+			// Registered exactly once for the wait, unregistered exactly once after.
+			expect(registrations).toEqual(["test-call-bg-background", "-test-call-bg-background"]);
+			await asyncJobManager.dispose();
+		});
+
 		it("should background instead of timing out when auto-background wait exceeds the effective timeout", async () => {
 			const deliveries: Array<{ jobId: string; text: string }> = [];
 			const asyncJobManager = new AsyncJobManager({

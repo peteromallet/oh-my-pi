@@ -279,6 +279,18 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	hasIrcInterrupts?: () => boolean | Promise<boolean>;
 
 	/**
+	 * Peeks whether the user requested moving foreground waits to the
+	 * background (a "background this wait" keybinding, no message content).
+	 * Returns the tool-call ids of the waits being targeted, or undefined
+	 * when no request is pending. Consumed on read: the loop aborts the
+	 * per-batch `ctx.toolCall.backgroundSignal` only when the batch actually
+	 * contains one of the targeted calls, so a request whose wait already
+	 * ended can never background a later batch's command. When omitted, no
+	 * background request is ever detected.
+	 */
+	hasBackgroundRequest?: () => ReadonlyArray<string> | undefined | Promise<ReadonlyArray<string> | undefined>;
+
+	/**
 	 * Returns follow-up messages to process after the agent would otherwise stop.
 	 *
 	 * Called when the agent has no more tool calls and no steering messages.
@@ -558,6 +570,15 @@ export interface ToolCallContext {
 	 * always safe (the message injects at the next batch boundary).
 	 */
 	steeringSignal?: AbortSignal;
+	/**
+	 * Cooperative background-request signal: aborted when the user asks to move
+	 * the current foreground wait to the background (keybinding), with no
+	 * message content. Like {@link steeringSignal} it NEVER kills the tool —
+	 * a long-running tool MAY observe it (via `ctx.toolCall.backgroundSignal`)
+	 * to return immediately while its work keeps running in the background;
+	 * ignoring it is always safe (the foreground wait just continues).
+	 */
+	backgroundSignal?: AbortSignal;
 }
 
 /** A single tool-call content block emitted by an assistant message. */

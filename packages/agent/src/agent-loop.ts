@@ -2230,6 +2230,7 @@ async function executeToolCalls(
 	const {
 		hasSteeringMessages,
 		hasIrcInterrupts,
+		hasBackgroundRequest,
 		interruptMode = "immediate",
 		getToolContext,
 		transformToolCallArguments,
@@ -2256,6 +2257,13 @@ async function executeToolCalls(
 	// backgrounds itself so the message injects promptly — but it never kills
 	// anything; ignoring it is always safe.
 	const steeringSoftController = new AbortController();
+	// Cooperative channel for a user-initiated "background this wait" request
+	// (keybinding, no message content). Aborted by the same mid-batch poll as
+	// steering when the host reports a pending background request; tools
+	// receive it via `ctx.toolCall.backgroundSignal` and MAY return early
+	// while their work keeps running as a background job. Like the steering
+	// soft signal it never kills anything; ignoring it is always safe.
+	const backgroundSoftController = new AbortController();
 	// Interruptible tools (pure waits: hub wait, vibe) observe steering +
 	// external + IRC aborts. Every other tool sees ONLY the external signal:
 	// neither queued steering nor a peer IRC ever hard-kills a partially
@@ -2349,6 +2357,27 @@ async function executeToolCalls(
 				const state: SteeringQueueState = queuedState;
 				steeringQueued = state.queued;
 				steeringSource = state.source ?? (state.queued ? "unknown" : undefined);
+			}
+		}
+		// User-initiated background request: soft-signal cooperative tools
+		// (auto-backgroundable bash) to return early while their work keeps
+		// running in the background. No message is queued, so unlike steering
+		// this never skips not-yet-started tools or touches the interrupt
+		// state — the only effect is the per-batch soft abort, which is
+		// idempotent. The request is scoped to tool-call ids: it only fires
+		// when this batch actually contains a targeted call, so a request
+		// whose wait already ended (consumed here without a match) can never
+		// background a later batch's command. Checked BEFORE the steering
+		// branch: a simultaneous steer triggers an early return below (and the
+		// watcher exits on interruptState.triggered), which would otherwise
+		// strand the request unconsumed to bleed into a later batch.
+		if (!backgroundSoftController.signal.aborted && config.hasBackgroundRequest !== undefined) {
+			const requestedToolCallIds = await config.hasBackgroundRequest();
+			if (
+				requestedToolCallIds !== undefined &&
+				records.some(record => requestedToolCallIds.includes(record.toolCall.id))
+			) {
+				backgroundSoftController.abort();
 			}
 		}
 		if (steeringQueued) {
@@ -2514,6 +2543,7 @@ async function executeToolCalls(
 							total: toolCalls.length,
 							toolCalls: toolCallInfos,
 							steeringSignal: steeringSoftController.signal,
+							backgroundSignal: backgroundSoftController.signal,
 							providerMetadata: toolCall.providerMetadata,
 						})
 					: undefined;
@@ -2639,7 +2669,8 @@ async function executeToolCalls(
 	// dequeue below injects the message promptly. Gated on immediate-interrupt
 	// mode; checkSteering is idempotent (no-op once triggered).
 	const watchSteeringWhileRunning =
-		shouldInterruptImmediately && (hasSteeringMessages !== undefined || hasIrcInterrupts !== undefined);
+		shouldInterruptImmediately &&
+		(hasSteeringMessages !== undefined || hasIrcInterrupts !== undefined || hasBackgroundRequest !== undefined);
 	const eventDrivenSteeringWatch =
 		watchSteeringWhileRunning && config.waitForSteeringMessages !== undefined && hasSteeringMessages !== undefined;
 	const steeringWatchAbortController = new AbortController();

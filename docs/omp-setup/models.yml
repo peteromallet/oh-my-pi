@@ -1,0 +1,40 @@
+# Custom provider wiring Grok's CLI auth (x.ai OIDC session) into omp.
+# Endpoint: the same OpenAI-compatible proxy the `grok` CLI uses.
+# Credentials: bearer token read from ~/.grok/auth.json via grok-token.py
+# (refreshes through auth.x.ai OIDC when near expiry — same token, same account).
+providers:
+  grok:
+    baseUrl: https://cli-chat-proxy.grok.com/v1
+    api: openai-completions
+    apiKey: "!python3 /Users/peteromalley/.omp/agent/grok-token.py"
+    headers:
+      X-XAI-Token-Auth: xai-grok-cli
+      x-grok-client-version: 1.0.5
+      x-grok-client-identifier: grok-shell
+    models:
+      - id: grok-4.6
+        name: Grok 4.6
+        contextWindow: 500000
+        maxTokens: 32768
+        reasoning: true
+        thinking:
+          mode: effort
+          efforts: [low, medium, high, xhigh]
+          defaultLevel: high
+        compat:
+          supportsDeveloperRole: true
+          supportsReasoningEffort: true
+          reasoningContentField: reasoning_content
+      - id: grok-4.5
+        name: Grok 4.5
+        contextWindow: 500000
+        maxTokens: 32768
+        reasoning: true
+        thinking:
+          mode: effort
+          efforts: [low, medium, high, xhigh]
+          defaultLevel: high
+        compat:
+          supportsDeveloperRole: true
+          supportsReasoningEffort: true
+          reasoningContentField: reasoning_content

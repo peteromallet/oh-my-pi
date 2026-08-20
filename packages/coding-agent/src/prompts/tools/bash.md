@@ -19,5 +19,5 @@ Use ONLY for one binary or a short pipeline that computes a fact (`wc -l`, `sort
 {{#if hasLaunch}}- Services, watchers, debuggers, and REPLs MUST use `hub` (`op:"start"`).{{/if}}
 </critical>
 
-{{#if autoBackgroundEnabled}}Long foreground calls may auto-background and deliver later. Need inline? Raise `timeout`.{{/if}}
+{{#if autoBackgroundEnabled}}Long foreground calls may auto-background and deliver later. A backgrounded call keeps its job id — follow it with `hub` (`op: "wait"`, job id), poll with `hub jobs`, or let the result deliver automatically when it completes. Need inline? Raise `timeout`.{{/if}}
 No truncation footer means the displayed output is complete.
