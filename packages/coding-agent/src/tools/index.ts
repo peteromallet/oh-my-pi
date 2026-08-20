@@ -353,6 +353,15 @@ export interface ToolSession {
 	trackEvalExecution?<T>(execution: Promise<T>, abortController: AbortController): Promise<T>;
 	/** Get tool-state session ID (distinct from the owning session for advisors). */
 	getSessionId?: () => string | null;
+	/**
+	 * Track the foreground managed bash wait currently backgroundable via the
+	 * user's background key. The bash tool registers its tool-call id for the
+	 * duration of the managed foreground wait and unregisters when the wait
+	 * settles, so the key can target exactly the live waits (and the loop can
+	 * discard a request whose wait already ended).
+	 */
+	registerBackgroundableBashWait?(toolCallId: string): void;
+	unregisterBackgroundableBashWait?(toolCallId: string): void;
 	/** Get Hindsight runtime state for this agent session. */
 	getHindsightSessionState?: () => HindsightSessionState | undefined;
 	/** Get Mnemopi runtime state for this agent session. */

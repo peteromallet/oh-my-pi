@@ -21,7 +21,7 @@ export function resolveAutoBackgroundWaitMs(thresholdMs: number, timeoutMs: numb
 }
 
 /** Non-settled outcomes of {@link raceJobSettlement}. */
-export type JobWaitInterrupt = { kind: "running" } | { kind: "steer" } | { kind: "aborted" };
+export type JobWaitInterrupt = { kind: "running" } | { kind: "steer" } | { kind: "aborted" } | { kind: "background" };
 
 /**
  * Race a managed job's settlement against the auto-background threshold, the
@@ -35,6 +35,7 @@ export async function raceJobSettlement<C>(
 	thresholdMs: number,
 	signal?: AbortSignal,
 	steeringSignal?: AbortSignal,
+	backgroundSignal?: AbortSignal,
 ): Promise<C | JobWaitInterrupt> {
 	if (signal?.aborted) {
 		return { kind: "aborted" };
@@ -42,6 +43,8 @@ export async function raceJobSettlement<C>(
 	if (steeringSignal?.aborted) {
 		return { kind: "steer" };
 	}
+
+	if (backgroundSignal?.aborted) return { kind: "background" };
 
 	// Cancellable threshold: a bare Bun.sleep(thresholdMs) leaves a live, ref'd
 	// timer for the full threshold after the job finishes (or abort/steer) wins
@@ -64,11 +67,18 @@ export async function raceJobSettlement<C>(
 		steeringSignal.addEventListener("abort", onSteer, { once: true });
 		waiters.push(steerPromise);
 	}
+	const { promise: backgroundPromise, resolve: resolveBackground } = Promise.withResolvers<{ kind: "background" }>();
+	const onBackground = () => resolveBackground({ kind: "background" });
+	if (backgroundSignal) {
+		backgroundSignal.addEventListener("abort", onBackground, { once: true });
+		waiters.push(backgroundPromise);
+	}
 	try {
 		return await Promise.race(waiters);
 	} finally {
 		clearTimeout(thresholdTimer);
 		signal?.removeEventListener("abort", onAbort);
 		steeringSignal?.removeEventListener("abort", onSteer);
+		backgroundSignal?.removeEventListener("abort", onBackground);
 	}
 }

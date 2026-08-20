@@ -299,6 +299,7 @@ export class InputController {
 		return this.#draftText ?? this.ctx.editor.getText();
 	}
 
+	#backgroundKeyListenerInstalled = false;
 	// Tap counter for the double-← gesture; reset whenever a quiet gap
 	// (>= LEFT_DOUBLE_TAP_MAX_GAP_MS) starts a fresh sequence. See
 	// #detectLeftDoubleTap.
@@ -468,6 +469,22 @@ export class InputController {
 			// Defers to fullscreen overlays, which own mouse handling on the
 			// alternate screen.
 			this.ctx.ui.addInputListener(data => this.#handleInlineMouse(data));
+		}
+		if (!this.#backgroundKeyListenerInstalled) {
+			this.#backgroundKeyListenerInstalled = true;
+			// `app.background` (Ctrl+Alt+B) moves the currently running
+			// foreground bash command(s) to the background — the processes keep
+			// running as async jobs and the tool calls return immediately.
+			// Only fires while a managed foreground bash wait is actually
+			// active (the authoritative state the bash tool maintains); the
+			// editor keeps receiving the key otherwise.
+			this.ctx.ui.addInputListener(data => {
+				if (!this.ctx.keybindings.matches(data, "app.background")) return undefined;
+				if (this.ctx.ui.hasOverlay()) return undefined;
+				if (!this.ctx.session.hasBackgroundableBashWait()) return undefined;
+				this.ctx.session.requestBashBackground();
+				return { consume: true };
+			});
 		}
 		this.ctx.editor.onEscape = () => {
 			// `/mcp test` advertises Esc until each owner's post-settlement grace expires.

@@ -121,6 +121,7 @@ function hotkeyGroups(bindings: HotkeysMarkdownBindings): HotkeyGroup[] {
 			title: "Other",
 			rows: [
 				{ keys: [hints(["tab"])], action: "Path completion / accept autocomplete" },
+				{ keys: [act("app.background")], action: "Move foreground bash wait to background" },
 				{ keys: [act("app.interrupt")], action: "Cancel autocomplete / interrupt active work" },
 				{ keys: [act("app.clear")], action: "Clear editor (first) / exit (second)" },
 				...exitRows,

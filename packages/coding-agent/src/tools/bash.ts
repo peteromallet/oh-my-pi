@@ -15,6 +15,8 @@ import type {
 	ToolApprovalDecision,
 	ToolTier,
 } from "@oh-my-pi/pi-agent-core";
+import { getKeybindings } from "@oh-my-pi/pi-tui";
+import { appKey } from "@oh-my-pi/pi-tui/chrome/keybinding-hints";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { PipeStreams } from "@oh-my-pi/pi-natives";
 import { isEnoent, logger, prompt } from "@oh-my-pi/pi-utils";
@@ -1252,15 +1254,31 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					notices: pendingNotices,
 				});
 			}
-			// The job was registered as foreground-backed: hidden from listings and
-			// delivery-suppressed until backgroundJob() promotes it, so a command
-			// finishing within the wait never surfaces as a background job.
-			const waitResult = await raceJobSettlement(
-				job.completion,
-				autoBackgroundWaitMs,
-				signal,
-				ctx?.toolCall?.steeringSignal,
-			);
+			// Suppress the completion delivery up front so a job finishing while we
+			// foreground-wait cannot also be injected by the delivery loop. Lifted
+			// via resumeDeliveries() if we end up backgrounding after all.
+			// Register this foreground wait as backgroundable so the user's
+			// background key targets exactly this tool call (and only aborts a
+			// batch that contains it — a wait that already ended is never
+			// re-targeted).
+			this.session.registerBackgroundableBashWait?.(toolCallId);
+			let waitResult:
+				| ManagedBashJobCompletion
+				| { kind: "running" }
+				| { kind: "steer" }
+				| { kind: "background" }
+				| { kind: "aborted" };
+			try {
+				waitResult = await raceJobSettlement(
+					job.completion,
+					autoBackgroundWaitMs,
+					signal,
+					ctx?.toolCall?.steeringSignal,
+					ctx?.toolCall?.backgroundSignal,
+				);
+			} finally {
+				this.session.unregisterBackgroundableBashWait?.(toolCallId);
+			}
 			if (waitResult.kind === "completed") {
 				autoBgManager.releaseForegroundJob(job.jobId);
 				return waitResult.result;
@@ -1278,11 +1296,20 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 			autoBgManager.backgroundJob(job.jobId);
 			// "steer": a queued user/peer message arrived mid-wait — background
 			// the command (it keeps running) so the message injects promptly.
-			// `job.notices` also carries the temporary-shell notice once the run started.
+			// "background": the user pressed the background key — same
+			// transition, no message involved. The key label is resolved from
+			// the live keybinding so a remapped action reads correctly. The
+			// notice teaches the model how to re-follow the job if needed.
+			const backgroundKey = appKey(getKeybindings(), "app.background") || "the background key";
 			const notices =
 				waitResult.kind === "steer"
 					? [...job.notices, "Backgrounded early to handle an incoming message; the command keeps running."]
-					: job.notices;
+					: waitResult.kind === "background"
+						? [
+								...job.notices,
+								`Backgrounded via ${backgroundKey}; the command keeps running as job ${job.jobId} — follow with hub (op: "wait"), or it delivers automatically when done.`,
+							]
+						: job.notices;
 			return this.#buildBackgroundStartResult(job.jobId, job.getLatestText(), timeoutSec, {
 				requestedTimeoutSec,
 				notices,

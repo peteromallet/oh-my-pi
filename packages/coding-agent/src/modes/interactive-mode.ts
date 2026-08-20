@@ -323,7 +323,7 @@ import { createSessionTeardown, type SessionTeardown } from "./session-teardown"
 import { sanitizeStatusText } from "@oh-my-pi/pi-tui/chrome/shared";
 import { invokeSkillCommandFromText, isKnownSkillCommand } from "./skill-command";
 import { clearMermaidCache } from "@oh-my-pi/pi-tui/theme/mermaid-cache";
-import { type ShimmerPalette, shimmerEnabled, shimmerText } from "@oh-my-pi/pi-tui/theme/shimmer";
+import { type ShimmerPalette, shimmerEnabled, shimmerSegments, shimmerText } from "@oh-my-pi/pi-tui/theme/shimmer";
 import type { Theme } from "@oh-my-pi/pi-tui/theme";
 import {
 	getEditorTheme,
@@ -516,15 +516,50 @@ interface WorkingMessageAccentCacheKey {
 	sessionAccentEnabled: boolean;
 }
 
-function renderWorkingMessage(message: string, accent?: WorkingMessageAccent): string {
-	if (!accent) return shimmerText(message, theme);
-	accent.palette ??= {
-		low: "dim",
-		mid: { ansi: accent.main },
-		high: { ansi: accent.main },
-		bold: true,
-	};
-	return shimmerText(message, theme, accent.palette);
+/**
+ * Intern the shimmer palettes for each `WorkingMessageAccent` so `compile()`
+ * inside `shimmerSegments` sees a stable palette object between animation
+ * ticks. Allocating fresh palette literals every frame guaranteed a cache miss
+ * on the Symbol-keyed compiled-ANSI slot and forced `resolveTierAnsi` to walk
+ * every tier open/close for the ~30fps loader redraw (issue #4377).
+ */
+const workingMessagePaletteCache = new WeakMap<WorkingMessageAccent, { main: ShimmerPalette; hint: ShimmerPalette }>();
+
+function workingMessagePalettes(accent: WorkingMessageAccent): { main: ShimmerPalette; hint: ShimmerPalette } {
+	let entry = workingMessagePaletteCache.get(accent);
+	if (!entry) {
+		entry = {
+			main: { low: "dim", mid: { ansi: accent.main }, high: { ansi: accent.main }, bold: true },
+			hint: { low: "dim", mid: { ansi: accent.dim }, high: { ansi: accent.dim } },
+		};
+		workingMessagePaletteCache.set(accent, entry);
+	}
+	return entry;
+}
+
+export function renderWorkingMessage(message: string, accent?: WorkingMessageAccent, extraHint?: string): string {
+	const palettes = accent ? workingMessagePalettes(accent) : undefined;
+	const palette = palettes?.main;
+	const hint = ` ${theme.format.bracketLeft}esc${theme.format.bracketRight}`;
+	// The composed loader message already carries the extra hint (so it is laid
+	// out with the text and can't clip); strip it here and re-render it as a
+	// styled segment instead of leaving it in the shimmered header.
+	let trailing = "";
+	if (extraHint && message.endsWith(extraHint)) {
+		message = message.slice(0, -extraHint.length);
+		trailing = extraHint;
+	}
+	if (!message.endsWith(hint)) return shimmerText(`${message}${trailing}`, theme, palette);
+	const header = message.slice(0, -hint.length);
+	const hintPalette = palettes?.hint ?? { low: "dim", mid: "muted", high: "muted" };
+	const segments = [
+		{ text: header, palette },
+		{ text: hint, palette: hintPalette },
+	];
+	if (trailing) {
+		segments.push({ text: trailing, palette: hintPalette });
+	}
+	return shimmerSegments(segments, theme);
 }
 
 const EDITOR_MAX_HEIGHT_MIN = 6;
@@ -1406,6 +1441,12 @@ export class InteractiveMode implements InteractiveModeContext {
 	retryLoader: Loader | undefined = undefined;
 	#pendingWorkingMessage: string | undefined;
 	#retryHintRow: DescribedComponent | undefined;
+	/**
+	 * Base working message WITHOUT the dynamic background hint (the hint is
+	 * appended by #composeWorkingMessage so it participates in the loader's
+	 * pre-layout text and cannot clip on narrow terminals).
+	 */
+	#workingMessageBase: string | undefined;
 	#workingMessageAccentCacheKey?: WorkingMessageAccentCacheKey;
 	#workingMessageAccentCacheValue?: WorkingMessageAccent;
 	#workingMessageAccentCacheHasValue = false;
@@ -1913,6 +1954,9 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.editor.modelMentionSelector = agent => this.session.modelMentions.find(m => m.agent === agent)?.selector;
 		this.editor.fileHyperlink = (filePath, text) => fileHyperlink(filePath, text, { line: 1 });
 		this.#ownsStartedUi = wasStarted;
+		// Keep the working-message background hint in sync with the live set of
+		// backgroundable waits (the bash tool registers/unregisters per wait).
+		this.session.setOnBackgroundableWaitsChange(() => this.#resyncWorkingMessageHint());
 		this.keybindings = KeybindingsManager.inMemory();
 		this.agent = session.agent;
 		this.#version = version;
@@ -7864,6 +7908,19 @@ export class InteractiveMode implements InteractiveModeContext {
 		return value;
 	}
 
+	/**
+	 * Live contextual affordance for the working-message status line: the
+	 * background key, shown only while a managed foreground bash wait is
+	 * active (the bash tool registers it via the session). Re-evaluated on
+	 * every loader repaint, so the hint appears/disappears with the wait.
+	 */
+	#backgroundWorkingHint(): string | undefined {
+		if (!this.session.hasBackgroundableBashWait()) return undefined;
+		const key = appKey(this.keybindings, "app.background");
+		if (!key) return undefined;
+		return ` ${theme.format.bracketLeft}bg → ${key}${theme.format.bracketRight}`;
+	}
+
 	#getWorkingMessageAccent(): WorkingMessageAccent | undefined {
 		const key = this.#buildWorkingMessageAccentCacheKey();
 		if (
@@ -7888,7 +7945,11 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#clearWorkingMessageAccentCache();
 			this.statusContainer.disposeChildren();
 			const messageColorFn = ((message: string) =>
-				renderWorkingMessage(message, this.#getWorkingMessageAccent())) as LoaderMessageColorFn & {
+				renderWorkingMessage(
+					message,
+					this.#getWorkingMessageAccent(),
+					this.#backgroundWorkingHint(),
+				)) as LoaderMessageColorFn & {
 				animated?: true;
 			};
 			// Shimmer drives the 30fps redraw; when it is disabled the working
@@ -7902,7 +7963,7 @@ export class InteractiveMode implements InteractiveModeContext {
 					return accent ? `${accent.dim}${spinner}\x1b[39m` : theme.fg("muted", spinner);
 				},
 				messageColorFn,
-				DEFAULT_WORKING_MESSAGE,
+				this.#composeWorkingMessage(),
 				// The brand spinner lives in the status line while working; this row
 				// leads with the interrupt affordance instead of a second spinner.
 				// The leading space nudges the row one column right of the flush-left
@@ -7937,22 +7998,41 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	setWorkingMessage(message?: string): void {
+		this.#workingMessageBase = message ?? DEFAULT_WORKING_MESSAGE;
 		if (message === undefined) {
 			this.#pendingWorkingMessage = undefined;
 			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage(DEFAULT_WORKING_MESSAGE);
+				this.loadingAnimation.setMessage(this.#composeWorkingMessage());
 				this.#workingMessage = DEFAULT_WORKING_MESSAGE;
 			}
 			return;
 		}
 
 		if (this.loadingAnimation) {
-			this.loadingAnimation.setMessage(message);
+			this.loadingAnimation.setMessage(this.#composeWorkingMessage());
 			this.#workingMessage = message;
 			return;
 		}
 
 		this.#pendingWorkingMessage = message;
+	}
+
+	/**
+	 * Full loader message: the base working message plus the live background
+	 * hint while a managed foreground bash wait is active. The hint is part of
+	 * the loader's PLAIN message (pre-layout), so narrow terminals wrap it
+	 * like any other text instead of clipping it post-colorization.
+	 */
+	#composeWorkingMessage(): string {
+		const hint = this.#backgroundWorkingHint();
+		if (!hint) return this.#workingMessageBase ?? DEFAULT_WORKING_MESSAGE;
+		return `${this.#workingMessageBase ?? DEFAULT_WORKING_MESSAGE}${hint}`;
+	}
+
+	/** Re-apply the composed message when the set of backgroundable waits changes. */
+	#resyncWorkingMessageHint(): void {
+		if (!this.loadingAnimation) return;
+		this.loadingAnimation.setMessage(this.#composeWorkingMessage());
 	}
 
 	applyPendingWorkingMessage(): void {
