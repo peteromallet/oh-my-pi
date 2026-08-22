@@ -119,7 +119,29 @@ cmd_run() {
 		exec "$OMP_BIN" --system-prompt "${PROMPT_CACHE_DIR}/${name}.md"
 	fi
 	if [[ "$1" == -* ]]; then
-		exec "$OMP_BIN" --system-prompt "${PROMPT_CACHE_DIR}/${name}.md" "$@"
+		# Partition leading omp flags from a trailing one-shot message.
+		# Flags alone keep the interactive TUI/picker; a message after them
+		# implies --print (headless one-shot). Value-taking flags consume
+		# their argument so it is not mistaken for the message.
+		local -a pass_flags=() rest_words=()
+		while [[ "$#" -gt 0 ]]; do
+			if [[ "$1" == -* ]]; then
+				pass_flags+=("$1")
+				case "$1" in
+					-r|--resume|--session-dir|--profile)
+						shift
+						[[ "$#" -gt 0 ]] && pass_flags+=("$1")
+						;;
+				esac
+			else
+				rest_words+=("$1")
+			fi
+			shift
+		done
+		if [[ "${#rest_words[@]}" -gt 0 ]]; then
+			exec "$OMP_BIN" --system-prompt "${PROMPT_CACHE_DIR}/${name}.md" "${pass_flags[@]}" --print "${rest_words[@]}"
+		fi
+		exec "$OMP_BIN" --system-prompt "${PROMPT_CACHE_DIR}/${name}.md" "${pass_flags[@]}"
 	fi
 	exec "$OMP_BIN" --system-prompt "${PROMPT_CACHE_DIR}/${name}.md" --print "$*"
 }
