@@ -37,11 +37,8 @@ import { cfgRetryModelFallback } from "../session/settings";
 const TITLE_SYSTEM_PROMPT = prompt.render(titleSystemPrompt);
 const TITLE_MARKER_INSTRUCTION = prompt.render(titleMarkerInstruction);
 
-// Plain π, not the nerd-font `icon.omp` glyph: window/tab titles render in the
-// OS UI font, which has no nerd-font PUA coverage.
-const DEFAULT_TERMINAL_TITLE = "π";
-/** The native tab title without a session name. */
-const NATIVE_TERMINAL_TITLE = "omp";
+const DEFAULT_TERMINAL_TITLE = "arnold";
+const NATIVE_TERMINAL_TITLE = "arnold";
 const TERMINAL_TITLE_CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 
 interface WindowsConsoleTitleApi {

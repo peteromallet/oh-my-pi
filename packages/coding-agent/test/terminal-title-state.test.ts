@@ -16,7 +16,7 @@ import { mockWindowsConsoleTitle, type WindowsConsoleTitleMock } from "./termina
 const LABEL = "my-project";
 // The brand the title runtime prefixes every composed title with. Plain π —
 // window titles render in the OS UI font, so nerd-font glyphs are unusable here.
-const BRAND = "π";
+const BRAND = "arnold";
 
 describe("buildTerminalTitleWithState", () => {
 	it("separates brand and label with '>' when idle/done (your turn)", () => {
@@ -97,7 +97,7 @@ describe("buildTerminalTitleWithState", () => {
 // `working` spinner arms a periodic `setInterval` that, on every tick, re-emits
 // the terminal title as an OSC-0 write (`ESC]0;<title>BEL`). If that interval is
 // not cleared on teardown, a pending tick can fire AFTER the shell title was
-// restored, leaving the parent shell tab reading `π ⠋ …` post-exit.
+// restored, leaving the parent shell tab reading `arnold ⠋ …` post-exit.
 // `disposeTerminalTitleState()` (now wired into `InteractiveMode.shutdown()`)
 // must stop the timer so no further OSC-title write reaches stdout.
 //
