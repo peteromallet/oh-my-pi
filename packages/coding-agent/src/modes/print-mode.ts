@@ -197,7 +197,7 @@ export async function runPrintMode(session: AgentSession, options: PrintModeOpti
 	let wroteTextWorkingIndicator = false;
 	const writeTextWorkingIndicator = (): void => {
 		if (mode !== "text" || wroteTextWorkingIndicator) return;
-		process.stderr.write("Working...\n");
+		process.stderr.write("Arnold working...\n");
 		wroteTextWorkingIndicator = true;
 	};
 

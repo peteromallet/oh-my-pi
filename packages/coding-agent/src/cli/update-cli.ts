@@ -1112,6 +1112,17 @@ export async function updateViaBinaryAt(
  * Run the update command.
  */
 export async function runUpdateCommand(opts: { force: boolean; check: boolean }): Promise<void> {
+	if (APP_NAME !== "omp") {
+		console.error(
+			chalk.red(
+				`This is a branded ${APP_NAME} build, not stock oh-my-pi. Self-update against ` +
+					`upstream oh-my-pi releases would replace it with stock omp. Rebuild from ` +
+					`the fork checkout instead: cd ~/Documents/oh-my-pi/packages/coding-agent && bun run build`,
+			),
+		);
+		process.exit(1);
+	}
+
 	console.log(chalk.dim(`Current version: ${VERSION}`));
 
 	// Check for updates
