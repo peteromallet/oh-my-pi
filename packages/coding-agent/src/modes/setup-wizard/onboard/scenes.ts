@@ -137,7 +137,7 @@ export function preselectedEntry(rows: readonly ScanEntry[]): ScanEntry | undefi
 
 class OnboardDetectPickController implements SetupSceneController {
 	readonly title = "Set up a provider";
-	subtitle = "Enter wires and verifies the highlighted provider.";
+	subtitle = "Pick a provider to set up — Enter verifies it and saves the route.";
 	#list: SelectList | undefined;
 	#entries: ScanEntry[] = [];
 	#showAll = false;
@@ -201,7 +201,7 @@ class OnboardDetectPickController implements SetupSceneController {
 		}
 		const list = this.#list;
 		if (!list) return [];
-		const lines = [theme.fg("muted", "Ready providers can be verified as-is; candidates adopt stored logins."), ""];
+		const lines = [theme.fg("muted", "Ready rows verify as-is — candidates reuse an existing sign-in."), ""];
 		this.#listRowStart = lines.length;
 		if (maxLines !== undefined) {
 			list.setMaxVisible(Math.max(1, Math.min(10, maxLines - lines.length - 1)));
@@ -442,7 +442,7 @@ class OnboardWireVerifyController implements SetupSceneController {
 			case "pick-other":
 				lines.push(
 					"",
-					theme.fg("warning", `${this.#attempts} attempts did not verify for ${this.#entry.provider}.`),
+					theme.fg("warning", `${this.#entry.provider} did not verify after ${this.#attempts} attempts.`),
 					theme.fg("dim", "Pick a different provider:"),
 				);
 				this.#otherListRowStart = lines.length;
@@ -701,7 +701,9 @@ class OnboardWireVerifyController implements SetupSceneController {
 			lines.push(...wrapTextWithAnsi(theme.fg("error", this.#error), width));
 		}
 		if (this.#authUrl) {
-			lines.push(theme.fg("accent", `Browser login: \x1b]8;;${this.#authUrl}\x07Open login URL\x1b]8;;\x07`));
+			lines.push(
+				`${theme.fg("accent", `Browser login: \x1b]8;;${this.#authUrl}\x07Open login URL\x1b]8;;\x07`)} ${theme.fg("dim", "(clipboard copy attempted; Alt+C retries)")}`,
+			);
 			for (const wrapped of wrapTextWithAnsi(theme.fg("dim", this.#authUrl), width).slice(0, 2)) {
 				lines.push(wrapped);
 			}

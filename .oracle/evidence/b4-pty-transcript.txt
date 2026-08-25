@@ -1,0 +1,144 @@
+# B4 pty transcript refresh — BEAUTY PASS verification
+Captured after the Batch 4 copy sweep: `omp onboard` driven end-to-end in a real
+pty (120x40) against a sandboxed HOME/PI_CODING_AGENT_DIR with a fake deepseek key
+(strict verify fails honestly on it — no fabricated success).
+
+- scene 1 mounted with refreshed subtitle/intro line: PASS
+- one Enter reached Wire and verify: PASS
+- strict verify reported inline provider failure: PASS
+- fake secret never rendered: PASS
+- ctrl+c plays the branded outro to completion; the process does not self-exit
+  after the wizard finishes (pre-existing since B2 — the B2 smoke recorded -9 the
+  same way; harness kill required). Decline/Esc still exits 1, non-TTY exits 2.
+
+## Frame — Scene 1 detect-pick (refreshed copy)
+```
+    Set up a provider
+    Pick a provider to set up — Enter verifies it and saves the route.
+
+    Ready rows verify as-is — candidates reuse an existing sign-in.
+
+    ❯ ● deepseek                      DEEPSEEK_API_KEY · model: deepseek-v4-flash · recommended                    █
+      ● openrouter                    OPENROUTER_API_KEY · model: openrouter/auto                                  │
+      ● xai                           XAI_API_KEY · model: grok-code-fast-1                                        │
+      ● zai                           ZAI_API_KEY · model: glm-4.6                                                 │
+      ● fireworks                     FIREWORKS_API_KEY · model: deepseek-v4-flash                                 │
+      ● openai-codex                  OPENAI_CODEX_OAUTH_TOKEN · model: gpt-5.5                                    │
+      ● azure                         AZURE_OPENAI_API_KEY                                                         │
+      ● github-copilot                COPILOT_GITHUB_TOKEN                                                         │
+      ● cursor                        CURSOR_ACCESS_TOKEN                                                          │
+      ● devin                         DEVIN_API_KEY                                                                │
+      Type to search
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                         ░░░░░░░░░░░░░░░░░▒░░░░░        ░░░░▒▒▒▒▒░░░░
+                               ↑/↓ select · enter confirm · esc skip · ctrl+c exit setup
+                                                      ▀██████████▀
+                                                       ╘██    ██
+                                                        ██    ██
+                                                        ██    ██
+                                                       ▄██▄  ▄██▄
+                                                         arnold
+                                                   Setup step 1 of 2
+
+    Set up a provider
+```
+
+## Frame — Scene 2 wire+verify, strict probe failure (inline, honest)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                               ↑/↓ select · enter confirm · esc skip · ctrl+c exit setup
+                                                      ▀██████████▀
+                                                       ╘██    ██
+                                                        ██    ██
+                                                        ██    ██
+                                                       ▄██▄  ▄██▄
+                                                         arnold
+                                                   Setup step 2 of 2
+
+    Wire and verify
+    One verified route completes setup.
+
+    deepseek/deepseek-v4-flash
+
+    401 Authentication Fails, Your api key: ****cdef is invalid
+    Authentication Fails, Your api key: ****cdef is invalid (type=authentication_error param=invalid_request_error)
+    Enter retries this provider · Esc picks another provider.
+```
+
+## Frame — Outro handoff after ctrl+c (shared stock outro, unchanged)
+```
+                                                     ✔ Setup saved
+                                             Handing off to the normal CLI…
+
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─
+                                  ✦                       ✦                                                     ✦
+                ·                                                                     ✦
+                                  ✦            ·
+                ·      ✦                             ·       ·                                           ✦      ✦
+
+                   ·     ·                                 ✦                            ·                        ·
+                                                                                       ·
+                   ·        ✦
+          ·                                               ·            ✦   ✦
+                                                                                          ✦ ·       ·
+   ·
+                ·                                                                                           ✦
+                 ·                        ·
+                                                           ·                                          ✦
+      ·          ✦                                                     ·                                    ✦                     ✦                                ✦         ✦ ·                                          ✦
+                                         ·
+·                                 ·  ·              · ·
+                                 ✦·
+                    ·                                                                                           ·
+
+                                                                                         ✦
+      ✦         ✦         ✦     ✦                                      ✦
+                                         ·                                                                         ✦
+            ✦   ·                                ·                            ·   ✦                          ·
+                                                                                                ·
+                                                              ·       ✦
+
+
+
+                                                      ▀██████████▀
+                                                       ╘██    ██
+                                                        ██    ██
+                                                        ██    ██
+                                                       ▄██▄  ▄██▄
+
+                                                     ✔ Setup saved
+```
