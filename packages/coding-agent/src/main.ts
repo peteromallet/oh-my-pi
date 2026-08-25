@@ -62,6 +62,7 @@ import { InteractiveMode } from "./modes/interactive-mode";
 import type { PrintModeOptions } from "./modes/print-mode";
 import { claimRpcInput } from "./modes/rpc/rpc-input";
 import { CURRENT_SETUP_VERSION } from "./modes/setup-version";
+import type { SetupScene } from "./modes/setup-wizard/scenes/types";
 import { initTheme, stopThemeWatcher } from "./modes/theme/theme";
 import type { SubmittedUserInput } from "./modes/types";
 import { createWarpEventBridgeExtension } from "./modes/warp-events";
@@ -457,6 +458,7 @@ async function runInteractiveMode(
 	initialMessage?: string,
 	initialImages?: ImageContent[],
 	joinLink?: string,
+	setupScenesOverride?: readonly SetupScene[],
 ): Promise<void> {
 	const mode = new InteractiveMode(
 		session,
@@ -471,20 +473,25 @@ async function runInteractiveMode(
 	// Cold-launch gate: the full setup wizard (every scene + the overlay and
 	// their TUI/OAuth/search/theme deps) is heavy, yet the common case only needs
 	// to know whether the stored setup version is current. Lazy-load the wizard
-	// barrel only when setup is stale, forced, or the explicit startup splash
-	// setting needs the shared setup splash renderer.
+	// to know whether the stored setup version is current. Lazy-load the wizard
+	// barrel only when setup is stale, forced, an explicit override supplies
+	// scenes (e.g. `omp onboard`), or the startup splash setting needs the
+	// shared setup splash renderer.
 	const storedSetupVersion = settings.get("setupVersion");
-	const setupWizard =
-		forceSetupWizard || storedSetupVersion < CURRENT_SETUP_VERSION || showStartupSplash
-			? await import("./modes/setup-wizard")
-			: undefined;
+	const needsWizard =
+		forceSetupWizard ||
+		storedSetupVersion < CURRENT_SETUP_VERSION ||
+		showStartupSplash ||
+		(setupScenesOverride?.length ?? 0) > 0;
+	const setupWizard = needsWizard ? await import("./modes/setup-wizard") : undefined;
 	const setupScenes = setupWizard
-		? await setupWizard.selectSetupScenes(storedSetupVersion, setupWizard.ALL_SCENES, mode, {
+		? (setupScenesOverride ??
+			(await setupWizard.selectSetupScenes(storedSetupVersion, setupWizard.ALL_SCENES, mode, {
 				resuming,
 				isTTY: process.stdin.isTTY && process.stdout.isTTY,
 				setupWizardEnabled: settings.get("startup.setupWizard"),
 				force: forceSetupWizard,
-			})
+			})))
 		: [];
 	const playStartupSplash = showStartupSplash && setupScenes.length === 0;
 
@@ -1189,6 +1196,8 @@ interface RunRootCommandDependencies {
 	createForeignSessionStore?: (source: ForeignSessionSource) => ForeignSessionStore;
 	settings?: Settings;
 	forceSetupWizard?: boolean;
+	/** Explicit scene list replacing version-based selection (used by `omp onboard`). */
+	setupScenes?: readonly SetupScene[];
 }
 const DEFAULT_RUN_ROOT_DEPENDENCIES: RunRootCommandDependencies = {};
 
@@ -1772,6 +1781,7 @@ export async function runRootCommand(
 				initialMessage,
 				initialImages,
 				parsedArgs.join,
+				deps.setupScenes,
 			);
 		} else {
 			// Branch-only single-shot runner: keep print-mode code out of normal interactive startup.
