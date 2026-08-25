@@ -28,7 +28,7 @@ interface DepsOverrides {
 	getCredentialOrigin?: (id: string) => { kind: string; envVar?: string } | undefined;
 	envApiKeyName?: (id: string) => string | undefined;
 	homeDir?: string;
-	modelsYmlProviders?: string[];
+	modelsYmlProviders?: { id: string; hasApiKey: boolean }[];
 }
 
 function makeDeps(overrides: DepsOverrides = {}, registryIds: string[] = SCRAMBLED_IDS): ScanDeps {
@@ -113,11 +113,20 @@ describe("scanProviders status logic", () => {
 		expect(xai?.origin).toEqual({ kind: "env", detail: "XAI_OAUTH_TOKEN" });
 	});
 
-	it("reports models.yml providers as ready", () => {
-		const entries = scanProviders(makeDeps({ modelsYmlProviders: ["fireworks"] }));
+	it("reports models.yml providers WITH an apiKey as ready", () => {
+		const entries = scanProviders(makeDeps({ modelsYmlProviders: [{ id: "fireworks", hasApiKey: true }] }));
 		const fireworks = entries.find(entry => entry.provider === "fireworks");
 		expect(fireworks?.status).toBe("ready");
-		expect(fireworks?.origin?.kind).toBe("models.yml");
+		expect(fireworks?.origin).toEqual({ kind: "models.yml", detail: "models.yml provider entry" });
+	});
+
+	it("does NOT report models.yml providers without an apiKey as ready", () => {
+		const entries = scanProviders(
+			makeDeps({ modelsYmlProviders: [{ id: "fireworks", hasApiKey: false }] }),
+		);
+		const fireworks = entries.find(entry => entry.provider === "fireworks");
+		expect(fireworks?.status).toBe("missing");
+		expect(fireworks?.origin).toBeNull();
 	});
 
 	it("prefers stored auth over env and models.yml signals", () => {
@@ -126,7 +135,7 @@ describe("scanProviders status logic", () => {
 				hasAuth: id => id === "anthropic",
 				getCredentialOrigin: id => (id === "anthropic" ? { kind: "api_key" } : undefined),
 				envApiKeyName: () => "ANTHROPIC_API_KEY",
-				modelsYmlProviders: ["anthropic"],
+				modelsYmlProviders: [{ id: "anthropic", hasApiKey: true }],
 			}),
 		);
 		const anthropic = entries.find(entry => entry.provider === "anthropic");

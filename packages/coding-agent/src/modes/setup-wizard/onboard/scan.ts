@@ -43,7 +43,8 @@ export interface ScanDeps {
 	auth: ScanAuthSource;
 	envApiKeyName(id: string): string | undefined;
 	homeDir: string;
-	modelsYmlProviders?: readonly string[];
+	/** Only entries WITH an apiKey count as ready — unverifiable rows must not claim an origin. */
+	modelsYmlProviders?: readonly { id: string; hasApiKey: boolean }[];
 }
 
 /** Arnold's routing preference order — these surface first in the wizard. */
@@ -118,7 +119,7 @@ function classify(provider: string, deps: ScanDeps): ScanEntry {
 			defaultModel: RECOMMENDED_MODELS[provider] ?? null,
 		};
 	}
-	if (deps.modelsYmlProviders?.includes(provider)) {
+	if (deps.modelsYmlProviders?.some(p => p.id === provider && p.hasApiKey)) {
 		return {
 			provider,
 			status: "ready",
@@ -169,10 +170,13 @@ export default async function scanProvidersLive(): Promise<ScanEntry[]> {
 			import("node:os"),
 		]);
 	const authStorage = await discoverAuthStorage();
-	let modelsYmlProviders: string[] | undefined;
+	let modelsYmlProviders: { id: string; hasApiKey: boolean }[] | undefined;
 	try {
 		const config = await ModelsConfigFile.loadOrDefaultAsync();
-		modelsYmlProviders = Object.keys(config.providers ?? {});
+		modelsYmlProviders = Object.entries(config.providers ?? {}).map(([id, provider]) => ({
+			id,
+			hasApiKey: Boolean(provider.apiKey),
+		}));
 	} catch {
 		modelsYmlProviders = undefined;
 	}
