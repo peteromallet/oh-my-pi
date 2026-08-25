@@ -63,8 +63,9 @@ const ARNOLD_ORDER = [
 /**
  * Sensible first model per provider, grounded in the bundled catalog; used by
  * the wizard to preselect a default so Enter suffices. `null` when no opinion.
+ * Exported for the onboard scenes' route-confirmation line.
  */
-const RECOMMENDED_MODELS: Record<string, string> = {
+export const RECOMMENDED_MODELS: Record<string, string> = {
 	deepseek: "deepseek-v4-flash",
 	openrouter: "openrouter/auto",
 	xai: "grok-code-fast-1",
