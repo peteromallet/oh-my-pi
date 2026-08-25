@@ -637,6 +637,7 @@ async function runInteractiveMode(
 	startupGoal?: string,
 	startupRestore?: () => Promise<RestoreOutcome>,
 	refreshScopedModelsAfterLogin?: () => Promise<void>,
+	setupScenesOverride?: readonly SetupScene[],
 ): Promise<void> {
 	const InteractiveModeConstructor = await loadInteractiveModeConstructor();
 	let mode: InteractiveMode;
@@ -660,7 +661,7 @@ async function runInteractiveMode(
 	}
 
 	let setupWizard: typeof SetupWizardModule | undefined;
-	let setupScenes: SetupScene[] = [];
+	let setupScenes: readonly SetupScene[] = [];
 	let playStartupSplash = false;
 	try {
 		// Cold-launch gate: the full setup wizard (every scene + the overlay and
@@ -670,16 +671,16 @@ async function runInteractiveMode(
 		// setting needs the shared setup splash renderer.
 		const storedSetupVersion = cfgSetupVersion.get(settings);
 		setupWizard =
-			forceSetupWizard || storedSetupVersion < CURRENT_SETUP_VERSION || showStartupSplash
+			forceSetupWizard || storedSetupVersion < CURRENT_SETUP_VERSION || showStartupSplash || setupScenesOverride !== undefined
 				? await import("./modes/setup")
 				: undefined;
 		setupScenes = setupWizard
-			? await setupWizard.selectSetupScenes(storedSetupVersion, setupWizard.ALL_SCENES, mode, {
+			? (setupScenesOverride ?? await setupWizard.selectSetupScenes(storedSetupVersion, setupWizard.ALL_SCENES, mode, {
 					resuming,
 					isTTY: process.stdin.isTTY && process.stdout.isTTY,
 					setupWizardEnabled: cfgStartupSetupWizard.get(settings),
 					force: forceSetupWizard,
-				})
+				}))
 			: [];
 		playStartupSplash = showStartupSplash && setupScenes.length === 0;
 
@@ -1760,6 +1761,8 @@ interface RunRootCommandDependencies {
 	createForeignSessionStore?: (source: ForeignSessionSource) => ForeignSessionStore;
 	settings?: Settings;
 	forceSetupWizard?: boolean;
+	/** Explicit scene list replacing version-based selection (used by `omp onboard`). */
+	setupScenes?: readonly SetupScene[];
 }
 const DEFAULT_RUN_ROOT_DEPENDENCIES: RunRootCommandDependencies = {};
 
@@ -2720,6 +2723,7 @@ export async function runRootCommand(
 						initialArgs.goal,
 						parsedArgs.restore ? () => restoreSession(session, { eventBus, subagentEventBus }) : undefined,
 						refreshScopedModelsAfterLogin,
+						deps.setupScenes,
 					);
 				} finally {
 					startupLease?.dispose();
