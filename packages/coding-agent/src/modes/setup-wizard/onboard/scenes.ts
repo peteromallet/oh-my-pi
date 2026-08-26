@@ -138,8 +138,10 @@ export function preselectedEntry(rows: readonly ScanEntry[]): ScanEntry | undefi
 //#region Scene 1 — detect-pick
 
 class OnboardDetectPickController implements SetupSceneController {
-	readonly title = "Set up a provider";
-	subtitle = "Pick a provider to set up — Enter verifies it and saves the route.";
+	readonly title = "Choose your LLM provider";
+	// Raw bold escape: chalk's support detection can yield level 0 inside the
+	// compiled binary, silently dropping the emphasis.
+	subtitle = `This will use \x1b[1myour existing credentials\x1b[22m from the selected provider.`;
 	#list: SelectList | undefined;
 	#entries: ScanEntry[] = [];
 	#showAll = false;
@@ -835,7 +837,7 @@ class OnboardWireVerifyController implements SetupSceneController {
 export const ONBOARD_SCENES: readonly SetupScene[] = [
 	{
 		id: "onboard-detect",
-		title: "Set up a provider",
+		title: "Choose your LLM provider",
 		minVersion: 0,
 		mount(host: SetupSceneHost): SetupSceneController {
 			return new OnboardDetectPickController(host);
