@@ -27,6 +27,7 @@ export function renderSetupOutro(width: number, height: number, elapsedMs: numbe
 		progress * 1.2,
 		{ pos: (progress * 2) % 1, strength: 1 - progress },
 		ACTIVE_IDENTITY.gradient,
+		ACTIVE_IDENTITY.cellOverrides,
 	);
 	const title = theme.bold(theme.fg("success", `${theme.status.success} Setup saved`));
 	const subtitle = theme.fg("muted", "Handing off to the normal CLI…");

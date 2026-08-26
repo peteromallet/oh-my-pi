@@ -202,7 +202,13 @@ export class SetupWizardComponent implements Component, OverlayFocusOwner {
 		const title = this.#activeScene?.title ?? scene?.title ?? "Setup";
 		const subtitle = this.#activeScene?.subtitle;
 		const contentWidth = Math.max(MIN_CONTENT_WIDTH, width - SCENE_MARGIN_X * 2);
-		const logo = gradientLogo(ACTIVE_IDENTITY.logo, 0, undefined, ACTIVE_IDENTITY.gradient);
+		const logo = gradientLogo(
+			ACTIVE_IDENTITY.logo,
+			0,
+			undefined,
+			ACTIVE_IDENTITY.gradient,
+			ACTIVE_IDENTITY.cellOverrides,
+		);
 		const header = [
 			"",
 			...logo.map(line => centerLine(line, width)),

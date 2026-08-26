@@ -8,7 +8,13 @@ import {
 	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
 import { APP_NAME } from "@oh-my-pi/pi-utils";
-import { ACTIVE_IDENTITY, type GradientPalette } from "./agent-identity";
+import { ACTIVE_IDENTITY, type GradientPalette, type LogoCellOverride } from "./agent-identity";
+
+/** SGR foreground escape for a fixed override color, capability-aware. */
+function overrideEscape(color: string): string {
+	const ansi256 = Bun.color(color, "ansi-256");
+	return ansi256 ?? "\x1b[38;2;255;255;255m";
+}
 import { theme } from "../../modes/theme/theme";
 import tipsText from "./tips.txt" with { type: "text" };
 
@@ -533,10 +539,15 @@ export function gradientLogo(
 	phase = 0,
 	shine?: ShineConfig,
 	palette: GradientPalette = ACTIVE_IDENTITY.gradient,
+	overrides?: readonly LogoCellOverride[],
 ): string[] {
 	const reset = "\x1b[0m";
 	const rows = lines.length;
 	const cols = Math.max(...lines.map(l => l.length));
+	const overrideMap =
+		overrides && overrides.length > 0
+			? new Map(overrides.map(o => [`${o.row}:${o.col}`, o] as const))
+			: undefined;
 	// span+1 so `base` stays strictly < 1: avoids the wrap-around at the
 	// far corner mapping back to t=0 (hot pink) on the resting frame.
 	const span = Math.max(1, cols + rows - 1);
@@ -544,6 +555,11 @@ export function gradientLogo(
 		let result = "";
 		for (let x = 0; x < line.length; x++) {
 			const char = line[x];
+			const override = overrideMap?.get(`${y}:${x}`);
+			if (override) {
+				result += overrideEscape(override.color) + (override.char ?? char) + reset;
+				continue;
+			}
 			if (char === " ") {
 				result += char;
 				continue;
@@ -586,6 +602,7 @@ function introLogoFrame(progress: number): string[] {
 		phase,
 		{ strength: shineStrength, pos: shinePos },
 		ACTIVE_IDENTITY.gradient,
+		ACTIVE_IDENTITY.cellOverrides,
 	);
 }
 
@@ -596,7 +613,13 @@ function restFrameFor(identity: { logo: readonly string[]; gradient: GradientPal
 	const key = identity.logo.join("\n");
 	let frame = REST_FRAMES.get(key);
 	if (!frame) {
-		frame = gradientLogo(identity.logo, 0, undefined, identity.gradient);
+		frame = gradientLogo(
+			identity.logo,
+			0,
+			undefined,
+			identity.gradient,
+			(identity as { cellOverrides?: LogoCellOverride[] }).cellOverrides,
+		);
 		REST_FRAMES.set(key, frame);
 	}
 	return frame;
