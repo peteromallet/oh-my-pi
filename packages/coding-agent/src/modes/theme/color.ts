@@ -18,6 +18,12 @@ export function detectColorMode(): ColorMode {
 	if (term === "dumb" || term === "" || term === "linux") {
 		return "256color";
 	}
+	// Apple Terminal predates truecolor SGR (38;2) and silently drops those
+	// escapes, rendering every themed color as the default foreground. Downgrade
+	// to the 256-color palette, which it does support.
+	if (Bun.env.TERM_PROGRAM === "Apple_Terminal") {
+		return "256color";
+	}
 	// Assume truecolor for everything else - virtually all modern terminals support it
 	return "truecolor";
 }
