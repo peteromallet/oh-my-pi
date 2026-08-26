@@ -40,7 +40,9 @@ describe("buildProviderItems markers", () => {
 		expect(items[0]!.label).toContain(theme.fg("success", theme.status.enabled));
 		expect(strip(items[0]!.label)).not.toContain(theme.status.success);
 		expect(strip(items[0]!.label)).toContain("deepseek");
-		expect(strip(items[1]!.label)).toContain("●");
+		// Candidates are hollow (○), so the green filled dot unambiguously marks ready.
+		expect(strip(items[1]!.label)).toContain("○");
+		expect(strip(items[1]!.label)).not.toContain("●");
 		expect(strip(items[1]!.label)).toContain("grok");
 	});
 
