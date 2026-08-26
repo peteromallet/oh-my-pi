@@ -1110,7 +1110,8 @@ export const cfgStartupSetupWizard = register({
 export const cfgStartupCheckUpdate = register({
 	id: "startup.checkUpdate",
 	type: "boolean",
-	default: true,
+	// Fork updates come from the reviewed source checkout.
+	default: false,
 	ui: {
 		tab: "interaction",
 		group: "Startup & Updates",
