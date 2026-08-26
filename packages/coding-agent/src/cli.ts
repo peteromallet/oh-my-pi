@@ -26,7 +26,7 @@ import {
 	setProfile,
 	VERSION,
 } from "@oh-my-pi/pi-utils/dirs";
-
+import { ACTIVE_IDENTITY } from "./modes/components/agent-identity";
 import { declareWorkerHostEntry, installWorkerInbox, isWorkerHostSelector } from "@oh-my-pi/pi-utils/worker-host";
 import { extractProfileFlags } from "./cli/profile-bootstrap";
 import {
@@ -53,7 +53,7 @@ if (Bun.semver.order(Bun.version, MIN_BUN_VERSION) < 0) {
 }
 
 try {
-	process.title = APP_NAME;
+	process.title = ACTIVE_IDENTITY.id;
 } catch {}
 
 // `Bun.build`-API compiled Windows executables report `import.meta.main ===
@@ -95,7 +95,7 @@ const PREPAINT_SAFE_FLAGS: Record<string, true> = {
 async function setFullProcessName(): Promise<void> {
 	// Latency boundary: bun:ffi/node:os are unnecessary before the first frame.
 	const { setProcessName } = await import("@oh-my-pi/pi-utils/process-name");
-	setProcessName(APP_NAME);
+	setProcessName(ACTIVE_IDENTITY.id);
 }
 
 /** Install PI_PROXY handling before any command implementation can make a provider request. */
