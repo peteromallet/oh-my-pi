@@ -67,17 +67,19 @@ export const PI_IDENTITY: AgentIdentity = {
 export const ARNOLD_IDENTITY: AgentIdentity = {
 	id: "arnold",
 	tagline: "a r n o l d",
+	// Every line padded to the same width: renderers center each line
+	// independently, so ragged widths would break the composition's offsets.
 	logo: [
-		"       ▄▟█▙",
-		"     ▐█▘▀██▄",
-		"    ▄████▛▀██▄",
+		"       ▄▟█▙     ",
+		"     ▐█▘▀██▄   ",
+		"    ▄████▛▀██▄  ",
 		"  ▄████████████▄",
 		" ▐██████████▀▀▀▘",
-		" ████████▌",
-		" █████▀▜▌",
-		" ████▌ ▐▌",
-		" ▀████▙▟▘",
-		"   ▀███▘",
+		" ████████▌      ",
+		" █████▀▜▌       ",
+		" ████▌ ▐▌       ",
+		" ▀████▙▟▘       ",
+		"   ▀███▘        ",
 	],
 	gradient: {
 		stops: [
