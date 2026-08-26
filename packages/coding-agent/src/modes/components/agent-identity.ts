@@ -6,7 +6,9 @@
  * outro. Unknown names fall back to the Oh My Pi face so third-party agents
  * inherit a sensible default instead of crashing.
  */
-import { APP_NAME } from "@oh-my-pi/pi-utils";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { APP_NAME, getAgentDir } from "@oh-my-pi/pi-utils";
 
 export interface GradientPalette {
 	/** Truecolor stops, bottom-left → top-right of the diagonal. */
@@ -28,6 +30,8 @@ export interface LogoCellOverride {
 export interface AgentIdentity {
 	/** Lowercase registry key; matches APP_NAME-style naming. */
 	id: string;
+	/** Human-facing name for chrome ("Astrid"), defaults to the id. */
+	displayName?: string;
 	/** Spaced-out brand line under the mark ("O h   M y   P i"). */
 	tagline: string;
 	/** Standard-size mark (welcome sidebar, wizard header, outro). */
@@ -40,6 +44,7 @@ export interface AgentIdentity {
 /** Oh My Pi face — the upstream default (pink → violet → cyan → mint). */
 export const PI_IDENTITY: AgentIdentity = {
 	id: "oh-my-pi",
+	displayName: "Oh My Pi",
 	tagline: "O h   M y   P i",
 	logo: [
 		"▀██████████▀",
@@ -66,6 +71,7 @@ export const PI_IDENTITY: AgentIdentity = {
  */
 export const ARNOLD_IDENTITY: AgentIdentity = {
 	id: "arnold",
+	displayName: "Arnold",
 	tagline: "a r n o l d",
 	// Every line padded to the same width: renderers center each line
 	// independently, so ragged widths would break the composition's offsets.
@@ -107,13 +113,65 @@ const REGISTRY: Readonly<Record<string, AgentIdentity>> = {
 	arnold: ARNOLD_IDENTITY,
 };
 
-/** Resolve an agent identity by name; unknown names fall back to Oh My Pi. */
-export function getAgentIdentity(name: string = APP_NAME): AgentIdentity {
-	return REGISTRY[name.toLowerCase()] ?? PI_IDENTITY;
+/** Tolerant JSON shape for user-defined identities. */
+interface CustomIdentityFile {
+	displayName?: string;
+	tagline?: string;
+	logo?: readonly string[];
+	gradient?: GradientPalette;
+	cellOverrides?: readonly LogoCellOverride[];
 }
 
-/** The identity this runtime was branded with. */
-export const ACTIVE_IDENTITY: AgentIdentity = getAgentIdentity();
+/**
+ * Load a user-defined identity from `<agentDir>/identities/<name>.json`.
+ * Lets custom agent instances carry their own face without forking this
+ * module: drop a JSON file, set OMP_AGENT_IDENTITY, done. Tolerant: anything
+ * malformed or missing falls back to the caller's default.
+ */
+function loadCustomIdentity(name: string): AgentIdentity | undefined {
+	try {
+		const path = join(getAgentDir(), "identities", `${name}.json`);
+		if (!existsSync(path)) return undefined;
+		const raw = JSON.parse(readFileSync(path, "utf8")) as CustomIdentityFile;
+		if (!Array.isArray(raw.logo) || raw.logo.length === 0 || !raw.logo.every(l => typeof l === "string")) {
+			return undefined;
+		}
+		let logo = raw.logo;
+		const widths = new Set(logo.map(l => l.length));
+		if (widths.size > 1) {
+			// Uniform width is mandatory: renderers center each line
+			// independently, so ragged widths break the composition.
+			const width = Math.max(...widths);
+			logo = logo.map(line => line + " ".repeat(width - line.length));
+		}
+		return {
+			id: name.toLowerCase(),
+			displayName: raw.displayName,
+			tagline: raw.tagline ?? name.replace(/(.)/g, "$1 ").trim(),
+			logo,
+			gradient: raw.gradient ?? PI_IDENTITY.gradient,
+			cellOverrides: raw.cellOverrides,
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Resolve an agent identity by name: built-in registry, then a user-defined
+ * `<agentDir>/identities/<name>.json`, then the Oh My Pi fallback.
+ */
+export function getAgentIdentity(name: string = APP_NAME): AgentIdentity {
+	const key = name.toLowerCase();
+	return REGISTRY[key] ?? loadCustomIdentity(key) ?? PI_IDENTITY;
+}
+
+/**
+ * The identity this runtime was branded with. Per-instance callers (the
+ * Arnold launcher) set OMP_AGENT_IDENTITY to the agent's name before spawn so
+ * each instance renders its own face.
+ */
+export const ACTIVE_IDENTITY: AgentIdentity = getAgentIdentity(Bun.env.OMP_AGENT_IDENTITY || APP_NAME);
 
 /** Expand standard-grid overrides to a doubled render (each cell -> 2x2). */
 export function scaleCellOverrides(
