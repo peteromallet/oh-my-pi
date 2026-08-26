@@ -1919,7 +1919,11 @@ export const SETTINGS_SCHEMA = {
 
 	"startup.checkUpdate": {
 		type: "boolean",
-		default: true,
+		// Fork default OFF: the npm release this check compares against is
+		// upstream oh-my-pi, and `omp update` would replace the branded
+		// source-built runtime with stock omp. Updates land via git merge
+		// from upstream + rebuild instead.
+		default: false,
 		ui: {
 			tab: "interaction",
 			group: "Startup & Updates",
