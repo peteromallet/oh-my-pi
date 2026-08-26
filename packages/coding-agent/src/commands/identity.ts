@@ -45,6 +45,17 @@ export class IdentityCommand extends Command {
 			};
 			writeFileSync(path, `${JSON.stringify(identity, null, "\t")}\n`, { mode: 0o644 });
 			console.log(`Wrote ${path}`);
+			// One scaffold, both halves of an instance: stub the agent definition
+			// too, so `arnold --agent <name>` works immediately.
+			const agentPath = join(getAgentDir(), "agents", `${key}.md`);
+			if (!existsSync(agentPath)) {
+				writeFileSync(
+					agentPath,
+					`---\nname: ${key}\ndescription: "${identity.displayName} - describe this agent's role here."\n---\n\nYou are ${identity.displayName}. Define the agent's behavior here.\n`,
+					{ mode: 0o644 },
+				);
+				console.log(`Wrote ${agentPath} (agent definition - add the system prompt body)`);
+			}
 			console.log("Edit the logo lines and gradient stops to taste; they hot-reload on next launch.");
 		} else {
 			console.log(`${path} already exists — leaving it untouched.`);
