@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import http2 from "node:http2";
-import { create, fromBinary, fromJson, type JsonValue, toBinary, toJson } from "@bufbuild/protobuf";
-import { ValueSchema } from "@bufbuild/protobuf/wkt";
-import type { ConversationStep, McpToolDefinition } from "@oh-my-pi/pi-catalog/discovery/cursor-gen/agent_pb";
+import type { ConversationStep, McpToolDefinition } from "@oh-my-pi/pi-catalog/discovery/cursor-proto";
 import {
 	AgentClientMessageSchema,
 	AgentConversationTurnStructureSchema,
@@ -139,11 +137,21 @@ import {
 	WriteShellStdinErrorSchema,
 	WriteShellStdinResultSchema,
 	WriteSuccessSchema,
-} from "@oh-my-pi/pi-catalog/discovery/cursor-gen/agent_pb";
+} from "@oh-my-pi/pi-catalog/discovery/cursor-proto";
+import {
+	create,
+	decodeJsonValue,
+	encodeJsonValue,
+	fromBinary,
+	type JsonValue,
+	toBinary,
+	toJson,
+} from "@oh-my-pi/pi-catalog/discovery/protobuf";
 import { isKimiK3ModelId } from "@oh-my-pi/pi-catalog/identity";
 import { calculateCost } from "@oh-my-pi/pi-catalog/models";
 import {
 	$env,
+	isRecord,
 	logger,
 	parseJsonWithRepair,
 	parseStreamingJson,
@@ -210,6 +218,7 @@ import {
 	buildPiWriteError,
 	buildPiWriteRejected,
 	buildPiWriteResult,
+	omitUndefinedArgs,
 	piEscapeRegexLiteral,
 	piGrepSkip,
 	piJoinPath,
@@ -219,9 +228,71 @@ import {
 	piReadPathHasRange,
 	piTimeout,
 } from "./cursor/exec-modern";
+import { handleInteractionQuery } from "./cursor/interaction-query";
 
 export const CURSOR_API_URL = "https://api2.cursor.sh";
 export const CURSOR_CLIENT_VERSION = "cli-2026.07.23-e383d2b";
+
+/**
+ * HTTP/1 connection-specific headers that HTTP/2 forbids. Node's `http2.request()`
+ * throws `ERR_HTTP2_INVALID_CONNECTION_HEADERS` on these rather than dropping
+ * them, so a caller sending one would kill the request outright.
+ */
+const HTTP2_FORBIDDEN_HEADERS = new Set([
+	"connection",
+	"keep-alive",
+	"proxy-connection",
+	"transfer-encoding",
+	"upgrade",
+	"http2-settings",
+]);
+
+/**
+ * Header names the Cursor request sets for itself. A caller copy in ANY casing
+ * has to go: the spread below adds the fixed lower-case name regardless, and two
+ * spellings of one field are a duplicate rather than an override.
+ */
+const CURSOR_RESERVED_HEADERS = new Set([
+	"content-type",
+	"connect-protocol-version",
+	"te",
+	"authorization",
+	"x-ghost-mode",
+	"x-cursor-client-version",
+	"x-cursor-client-type",
+	"x-request-id",
+	// Transport-owned even though this request never sets it: node's http2 client
+	// suppresses the `:authority` it derives from the URL when a plain `host`
+	// header is present, so a caller value here silently retargets the request at
+	// a different virtual host.
+	"host",
+	// The Connect body is streamed after the headers (initial frame, heartbeats,
+	// tool responses), so no caller-supplied length can describe it and an HTTP/2
+	// peer resets the stream once the body diverges.
+	"content-length",
+]);
+
+/**
+ * Reduce caller-supplied headers to what this HTTP/2 request can legally carry.
+ *
+ * Everything is lower-cased, because HTTP/2 field names are lower-case and node
+ * compares them that way. A caller `Authorization` next to the fixed
+ * `authorization` does not lose to it, it DUPLICATES it, and node throws
+ * `ERR_HTTP2_HEADER_SINGLE_VALUE` before the request goes out. Same for a `TE`
+ * that is not `trailers`. Node throws on all three classes here rather than
+ * ignoring them, so a miss turns a harmless header into a dead request.
+ */
+function sanitizeCursorCallerHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+	const sanitized: Record<string, string> = {};
+	for (const [name, value] of Object.entries(headers ?? {})) {
+		const field = name.toLowerCase();
+		if (field.startsWith(":")) continue;
+		if (HTTP2_FORBIDDEN_HEADERS.has(field)) continue;
+		if (CURSOR_RESERVED_HEADERS.has(field)) continue;
+		sanitized[field] = value;
+	}
+	return sanitized;
+}
 
 const CURSOR_PROXY_TUNNEL_TIMEOUT_MS = 30_000;
 
@@ -231,11 +302,23 @@ const CURSOR_PROXY_TUNNEL_TIMEOUT_MS = 30_000;
  * model reads it and should route around the capability, not retry the call.
  */
 const NOT_IMPLEMENTED_SUFFIX = "not implemented by this client";
+/** Bare gRPC `resource_exhausted` end-streams (also inside a Connect error message). */
+const RESOURCE_EXHAUSTED_PATTERN = /resource.?exhausted/i;
 const NOT_IMPLEMENTED = `Not implemented by this client`;
 
 const conversationStateCache = new Map<string, ConversationStateStructure>();
 const conversationBlobStores = new Map<string, Map<string, Uint8Array>>();
 const warnedCursorKimiK3ReplayMessages = new Set<string>();
+/**
+ * Base conversation id → rotated wire id (#8345). Cursor's backend can pin a
+ * per-conversation rejection (bare `resource_exhausted`, zero tokens) to one
+ * conversationId forever; the session is then unusable until /fork mints a
+ * new id. On the first such failure the id is rotated once and the cached
+ * state migrates, so the retry loop's next attempt starts a fresh
+ * conversation — the same recovery /fork performs. Keyed by the base id the
+ * caller derived, so a failed rotation is never repeated.
+ */
+const rotatedConversationIds = new Map<string, string>();
 
 export interface CursorOptions extends StreamOptions {
 	customSystemPrompt?: string;
@@ -525,17 +608,23 @@ export const streamCursor: StreamFunction<"cursor-agent"> = (
 			h2Completion.resolve();
 		};
 
+		// Hoisted out of the try block: the #8345 rotation in the catch path
+		// needs both ids, and the catch block cannot see try-scoped consts.
+		let baseConversationId: string | undefined;
+		let conversationId: string | undefined;
+		let usageState: UsageState | undefined;
 		try {
 			const apiKey = options?.apiKey;
 			if (!apiKey) {
 				throw new AIError.MissingApiKeyError(undefined, "Cursor API key (access token) is required");
 			}
 
-			const conversationId = options?.conversationId ?? options?.sessionId ?? crypto.randomUUID();
+			baseConversationId = options?.conversationId ?? options?.sessionId ?? crypto.randomUUID();
+			conversationId = rotatedConversationIds.get(baseConversationId) ?? baseConversationId;
 			const blobStore = conversationBlobStores.get(conversationId) ?? new Map<string, Uint8Array>();
 			conversationBlobStores.set(conversationId, blobStore);
 			const cachedState = conversationStateCache.get(conversationId);
-			const { requestBytes, conversationState } = buildGrpcRequest(model, context, options, {
+			const { requestBytes, conversationState } = await buildGrpcRequest(model, context, options, {
 				conversationId,
 				blobStore,
 				conversationState: cachedState,
@@ -545,7 +634,22 @@ export const streamCursor: StreamFunction<"cursor-agent"> = (
 
 			const baseUrl = model.baseUrl || CURSOR_API_URL;
 			const requestPath = "/agent.v1.AgentService/Run";
+			// Caller headers are additive, and are spread FIRST so the protocol
+			// framing, auth, and request id below always win. Cursor built this map
+			// from scratch and never read `options.headers`, so tracing/attribution
+			// headers set by a caller (or a `before_provider_headers` extension) were
+			// silently dropped here while working on other providers.
+			//
+			// Two classes are stripped because node's http2 client THROWS on them
+			// rather than ignoring them, which would turn a harmless header into a
+			// dead request: pseudo-headers, which belong to the transport, and the
+			// HTTP/1 connection-specific headers HTTP/2 forbids outright
+			// (ERR_HTTP2_INVALID_CONNECTION_HEADERS). `te` needs no filtering here —
+			// HTTP/2 allows it only as `trailers`, which is exactly what the fixed
+			// set below re-applies over anything a caller sent.
+			const callerHeaders = sanitizeCursorCallerHeaders(options?.headers);
 			const requestHeaders = {
+				...callerHeaders,
 				":method": "POST",
 				":path": requestPath,
 				"content-type": "application/connect+proto",
@@ -590,7 +694,7 @@ export const streamCursor: StreamFunction<"cursor-agent"> = (
 			let currentThinkingBlock: (ThinkingContent & { [kStreamingBlockIndex]: number }) | null = null;
 			let currentToolCall: ToolCallState | null = null;
 			const resolvedMcpToolCallIds = new Set<string>();
-			const usageState: UsageState = { sawTokenDelta: false };
+			usageState = { sawTokenDelta: false };
 
 			const state: BlockState = {
 				get currentTextBlock() {
@@ -625,7 +729,7 @@ export const streamCursor: StreamFunction<"cursor-agent"> = (
 			openBlockState = state;
 
 			const onConversationCheckpoint = (checkpoint: ConversationStateStructure) => {
-				conversationStateCache.set(conversationId, checkpoint);
+				conversationStateCache.set(conversationId!, checkpoint);
 			};
 
 			h2Request.on("response", headers => {
@@ -682,7 +786,7 @@ export const streamCursor: StreamFunction<"cursor-agent"> = (
 							h2Request!,
 							options?.execHandlers,
 							options?.onToolResult,
-							usageState,
+							usageState!,
 							requestContextTools,
 							onConversationCheckpoint,
 						).catch(error => {
@@ -796,6 +900,28 @@ export const streamCursor: StreamFunction<"cursor-agent"> = (
 				flushOpenToolCalls(output, stream, openBlockState);
 			}
 			const result = await AIError.finalize(error, { api: model.api, signal: options?.signal });
+			// #8345: a server-side per-conversation rejection surfaces as a bare
+			// resource_exhausted with zero tokens — the conversation is poisoned,
+			// not the account (sibling conversations keep working). Rotate the
+			// wire id once and migrate the cached state so the next attempt (the
+			// caller's retry loop) starts a fresh conversation, exactly like
+			// /fork. Only the first failure rotates; repeated failures keep the
+			// rotated id so a genuine account-level exhaustion is not hidden.
+			if (
+				conversationId !== undefined &&
+				baseConversationId !== undefined &&
+				usageState !== undefined &&
+				!usageState.sawTokenDelta &&
+				RESOURCE_EXHAUSTED_PATTERN.test(result.message) &&
+				!rotatedConversationIds.has(baseConversationId)
+			) {
+				const rotated = crypto.randomUUID();
+				rotatedConversationIds.set(baseConversationId, rotated);
+				const state = conversationStateCache.get(conversationId);
+				if (state) conversationStateCache.set(rotated, state);
+				const blobs = conversationBlobStores.get(conversationId);
+				if (blobs) conversationBlobStores.set(rotated, blobs);
+			}
 			output.stopReason = result.stopReason;
 			output.errorStatus = result.status;
 			output.errorId = result.id;
@@ -823,7 +949,7 @@ export type ToolCallState = ToolCall & {
 	[kStreamingBlockIndex]: number;
 	[kStreamingPartialJson]?: string;
 	[kStreamingLastParseLen]?: number;
-	[kStreamingBlockKind]: "mcp" | "todo" | "cursor-exec" | "connect-scm";
+	[kStreamingBlockKind]: "mcp" | "todo" | "cursor-exec" | "connect-scm" | "web-fetch";
 	[kStreamingEnvelopeId]?: string;
 	[kCursorExecResolved]?: true;
 };
@@ -907,9 +1033,65 @@ export async function handleServerMessage(
 				state,
 			),
 		);
+	} else if (msgCase === "interactionQuery") {
+		// Cursor asks the client to approve native web search / Exa fetch / etc.
+		// before it will continue the turn. Dropping the frame leaves the server
+		// waiting on a reply that never comes; the lazy idle watchdog then
+		// aborts a live stream with "Provider stream stalled while waiting for
+		// the next event" (cursor-grok-4.6-xhigh after a WebFetch/WebSearch
+		// permission prompt).
+		handleInteractionQuery(msg.message.value, h2Request);
 	} else if (msgCase === "conversationCheckpointUpdate") {
 		handleConversationCheckpointUpdate(msg.message.value, output, usageState, onConversationCheckpoint);
 	}
+}
+
+type ProtoUnknownField = { no: number; wireType: number; data: Uint8Array };
+
+type HostedFetchCall = {
+	args?: { url?: string; toolCallId?: string };
+	result?: { result?: { case?: string; value?: { content?: string; error?: string; url?: string } } };
+};
+
+function selectHostedFetchCall(
+	toolCall: { tool?: { case?: string; value?: HostedFetchCall } } | undefined,
+): HostedFetchCall | undefined {
+	const oneof = toolCall?.tool;
+	if (oneof?.case === "fetchToolCall" || oneof?.case === "webFetchToolCall") return oneof.value;
+	return undefined;
+}
+
+function hostedFetchUnknown(toolCall: object | undefined): boolean {
+	if (!toolCall) return false;
+	return (
+		protoUnknownFields(toolCall).some(field => field.no === 37) ||
+		protoUnknownFields((toolCall as { tool?: object }).tool ?? {}).some(field => field.no === 37)
+	);
+}
+
+function extractHttpUrlFromUnknown(message: object): string | undefined {
+	for (const field of protoUnknownFields(message)) {
+		const match = new TextDecoder().decode(field.data).match(/https?:\/\/[^\x00-\x1f]+/);
+		if (match) return match[0];
+	}
+	const nested = (message as { tool?: object }).tool;
+	return nested ? extractHttpUrlFromUnknown(nested) : undefined;
+}
+
+function describeHostedFetchResult(call: HostedFetchCall | undefined): { text: string; isError: boolean } {
+	const result = call?.result?.result;
+	if (result?.case === "success") {
+		return { text: result.value?.content || result.value?.url || "Fetched", isError: false };
+	}
+	if (result?.case === "error") {
+		return { text: result.value?.error || "Fetch failed", isError: true };
+	}
+	return { text: "Fetch completed", isError: false };
+}
+
+function protoUnknownFields(message: object): ProtoUnknownField[] {
+	const raw = (message as { $unknown?: ProtoUnknownField[] }).$unknown;
+	return Array.isArray(raw) ? raw : [];
 }
 
 function handleKvServerMessage(
@@ -2925,8 +3107,7 @@ function parseToolArgsJson(text: string): unknown {
 
 function decodeMcpArgValue(value: Uint8Array): unknown {
 	try {
-		const parsedValue = fromBinary(ValueSchema, value);
-		const jsonValue = toJson(ValueSchema, parsedValue) as JsonValue;
+		const jsonValue = decodeJsonValue(value);
 		if (typeof jsonValue === "string") {
 			return parseToolArgsJson(jsonValue);
 		}
@@ -3592,11 +3773,14 @@ export function synthesizeCursorExecToolCall(
 ): void {
 	endCurrentTextBlock(output, stream, state);
 	endCurrentThinkingBlock(output, stream, state);
+	// Exec-frame translators often write `optional: value || undefined`. A
+	// present `undefined` fails ArkType optional-field validation; drop those
+	// keys so the transcript block matches what a model-native call would omit.
 	const block: ToolCallState = {
 		type: "toolCall",
 		id: toolCallId,
 		name: toolName,
-		arguments: args,
+		arguments: omitUndefinedArgs(args),
 		[kStreamingBlockIndex]: output.content.length,
 		[kStreamingBlockKind]: "cursor-exec",
 		[kCursorExecResolved]: true,
@@ -3785,6 +3969,28 @@ export function processInteractionUpdate(
 				output.content.push(block);
 				retainStreamedCall(state, block, update.message.value.callId);
 				stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+				return;
+			}
+
+			const fetchCall = selectHostedFetchCall(toolCall);
+			if (fetchCall || hostedFetchUnknown(toolCall)) {
+				// Hosted WebFetch / Fetch is permission-gated via InteractionQuery, then
+				// run server-side. Stamp resolved so agent-loop does not try a local tool.
+				const url = fetchCall?.args?.url || extractHttpUrlFromUnknown(toolCall);
+				const callId = fetchCall?.args?.toolCallId || update.message.value.callId || crypto.randomUUID();
+				const block: ToolCallState = {
+					type: "toolCall",
+					id: callId,
+					name: "web_fetch",
+					arguments: url ? { url } : {},
+					[kStreamingBlockIndex]: output.content.length,
+					[kStreamingBlockKind]: "web-fetch",
+					[kStreamingEnvelopeId]: update.message.value.callId || undefined,
+					[kCursorExecResolved]: true,
+				};
+				output.content.push(block);
+				retainStreamedCall(state, block, update.message.value.callId);
+				stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
 			}
 		}
 	} else if (updateCase === "toolCallDelta" || updateCase === "partialToolCall") {
@@ -3858,6 +4064,19 @@ export function processInteractionUpdate(
 					role: "toolResult",
 					toolCallId: settled.id,
 					toolName: "connect_scm",
+					content: [{ type: "text", text }],
+					isError,
+					timestamp: Date.now(),
+				});
+			} else if (settled[kStreamingBlockKind] === "web-fetch") {
+				const fetchCall = selectHostedFetchCall(toolCall);
+				const url = fetchCall?.args?.url || extractHttpUrlFromUnknown(toolCall ?? {});
+				if (url) settled.arguments = { url };
+				const { text, isError } = describeHostedFetchResult(fetchCall);
+				state.onToolResult?.({
+					role: "toolResult",
+					toolCallId: settled.id,
+					toolName: "web_fetch",
 					content: [{ type: "text", text }],
 					isError,
 					timestamp: Date.now(),
@@ -4000,10 +4219,10 @@ export function buildMcpToolDefinitions(tools: Tool[] | undefined): McpToolDefin
 	return forwarded.map(tool => {
 		const jsonSchema = toolWireSchema(tool);
 		const schemaValue: JsonValue =
-			jsonSchema && typeof jsonSchema === "object"
-				? (jsonSchema as JsonValue)
+			jsonSchema !== null && !Array.isArray(jsonSchema) && isJsonValue(jsonSchema)
+				? jsonSchema
 				: { type: "object", properties: {}, required: [] };
-		const inputSchema = toBinary(ValueSchema, fromJson(ValueSchema, schemaValue));
+		const inputSchema = encodeJsonValue(schemaValue);
 		return create(McpToolDefinitionSchema, {
 			name: tool.name,
 			description: tool.description || "",
@@ -4251,17 +4470,11 @@ function buildRootPromptMessagesJson(
 	return entries;
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-	if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-	const prototype = Object.getPrototypeOf(value);
-	return prototype === Object.prototype || prototype === null;
-}
-
 function isJsonValue(value: unknown): value is JsonValue {
 	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
 	if (typeof value === "number") return Number.isFinite(value);
 	if (Array.isArray(value)) return value.every(isJsonValue);
-	if (!isPlainRecord(value)) return false;
+	if (!isRecord(value)) return false;
 	for (const key in value) {
 		if (!isJsonValue(value[key])) return false;
 	}
@@ -4276,7 +4489,7 @@ function encodeCursorMcpArguments(toolCall: ToolCall): Record<string, Uint8Array
 		if (!isJsonValue(value)) {
 			throw new AIError.ValidationError(`Cursor tool argument ${toolCall.name}.${name} is not JSON-serializable`);
 		}
-		encoded[name] = toBinary(ValueSchema, fromJson(ValueSchema, value));
+		encoded[name] = encodeJsonValue(value);
 	}
 	return encoded;
 }
@@ -4522,7 +4735,7 @@ function extractImages(content: (TextContent | ImageContent)[]) {
 		);
 }
 
-function buildGrpcRequest(
+export async function buildGrpcRequest(
 	model: Model<"cursor-agent">,
 	context: Context,
 	options: CursorOptions | undefined,
@@ -4531,11 +4744,11 @@ function buildGrpcRequest(
 		blobStore: Map<string, Uint8Array>;
 		conversationState?: ConversationStateStructure;
 	},
-): {
+): Promise<{
 	requestBytes: Uint8Array;
 	blobStore: Map<string, Uint8Array>;
 	conversationState: ConversationStateStructure;
-} {
+}> {
 	const blobStore = state.blobStore;
 
 	const systemPromptIds = buildCursorSystemPromptJsons(context.systemPrompt).map(json =>
@@ -4641,7 +4854,7 @@ function buildGrpcRequest(
 		maxMode: cursorMaxMode,
 	});
 
-	const runRequest = create(AgentRunRequestSchema, {
+	let runRequest = create(AgentRunRequestSchema, {
 		conversationState,
 		action,
 		modelDetails,
@@ -4649,13 +4862,17 @@ function buildGrpcRequest(
 		conversationId: state.conversationId,
 	});
 
-	options?.onPayload?.(runRequest, model);
-
-	// Tools are sent later via requestContext (exec handshake)
-
+	// Apply customSystemPrompt BEFORE the hook so the onPayload replacement is the
+	// final word on the wire body — same contract as anthropic, where the hook runs
+	// right before serialization. An extension may inspect or drop it via the
+	// replacement it returns.
 	if (options?.customSystemPrompt) {
 		runRequest.customSystemPrompt = options.customSystemPrompt;
 	}
+
+	// Tools are sent later via requestContext (exec handshake)
+	const replacementRequest = await options?.onPayload?.(runRequest, model);
+	if (replacementRequest !== undefined) runRequest = replacementRequest as typeof runRequest;
 
 	const clientMessage = create(AgentClientMessageSchema, {
 		message: { case: "runRequest", value: runRequest },

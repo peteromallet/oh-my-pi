@@ -148,18 +148,17 @@ export function getMarkdownTheme(): MarkdownTheme {
 	}
 	const mermaid = markdownMermaidRendering
 		? (() => {
-				// Mermaid ASCII diagrams render with the active palette so they read as
-				// content rather than raw monochrome. Roles mirror the SVG renderer's
-				// mapping; `text`/`muted`/`border`/`borderMuted`/`accent` exist in every theme.
+				// Diagram geometry is content, so keep every structural stroke on the
+				// theme's readable muted foreground instead of subtle UI chrome borders.
 				const mermaidColorMode =
 					theme.getColorMode() === "truecolor" ? ("truecolor" as const) : ("ansi256" as const);
 				const mermaidTheme = {
 					fg: theme.getColorHex("text"),
-					border: theme.getColorHex("border"),
+					border: theme.getColorHex("muted"),
 					line: theme.getColorHex("muted"),
 					arrow: theme.getColorHex("accent"),
 					corner: theme.getColorHex("muted"),
-					junction: theme.getColorHex("borderMuted"),
+					junction: theme.getColorHex("muted"),
 				};
 				return { mermaidColorMode, mermaidTheme };
 			})()
@@ -231,6 +230,8 @@ export function getEditorTheme(): EditorTheme {
 	if (typeof theme === "undefined") {
 		return {
 			borderColor: (text: string) => text,
+			accentColor: (text: string) => text,
+			surfaceColor: (text: string) => text,
 			selectList: getSelectListTheme(),
 			symbols: getSymbolTheme(),
 			hintStyle: (text: string) => text,
@@ -238,6 +239,8 @@ export function getEditorTheme(): EditorTheme {
 	}
 	return {
 		borderColor: (text: string) => theme.fg("borderMuted", text),
+		accentColor: (text: string) => theme.fg("accent", text),
+		surfaceColor: (text: string) => theme.bgFill("userMessageBg", text),
 		selectList: getSelectListTheme(),
 		symbols: getSymbolTheme(),
 		hintStyle: (text: string) => theme.fg("dim", text),
@@ -255,6 +258,8 @@ export function getSettingsListTheme(): SettingsListTheme {
 			label: (text: string) => text,
 			value: (text: string) => text,
 			description: (text: string) => text,
+			warning: (text: string) => text,
+			warningMark: "!",
 			cursor: "> ",
 			hint: (text: string) => text,
 			heading: (text: string) => text,
@@ -268,6 +273,8 @@ export function getSettingsListTheme(): SettingsListTheme {
 		value: (text: string, selected: boolean, changed: boolean) =>
 			changed ? theme.fg("statusLineGitDirty", text) : selected ? theme.fg("accent", text) : theme.fg("muted", text),
 		description: (text: string) => theme.fg("dim", text),
+		warning: (text: string) => theme.fg("warning", text),
+		warningMark: theme.status.warning,
 		cursor: theme.fg("accent", `${theme.nav.cursor} `),
 		hint: (text: string) => theme.fg("dim", text),
 		heading: (text: string, dimmed: boolean) =>

@@ -7,6 +7,7 @@
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import { type Component, Text } from "@oh-my-pi/pi-tui";
 import { formatBytes, formatDuration } from "@oh-my-pi/pi-utils";
+import type { AsyncJobType } from "../../async";
 import {
 	type CustomMessage,
 	type FileMentionMessage,
@@ -16,6 +17,7 @@ import {
 import { createIrcMessageCard } from "../../tools/hub";
 import { replaceTabs, TRUNCATE_LENGTHS, truncateToWidth } from "../../tools/render-utils";
 import { canonicalizeMessage } from "../../utils/thinking-display";
+import { ToolActivityContainer } from "../components/tool-activity";
 import { TranscriptBlock } from "../components/transcript-container";
 import { theme } from "../theme/theme";
 
@@ -27,14 +29,14 @@ type AssistantAgentMessage = Extract<AgentMessage, { role: "assistant" }>;
  * or a batch of them) as a transcript block of one "Background job completed"
  * row per job.
  */
-export function buildAsyncResultBlock(message: CustomOrHookMessage): TranscriptBlock {
+export function buildAsyncResultBlock(message: CustomOrHookMessage): ToolActivityContainer {
 	const details = (
 		message as CustomMessage<{
 			jobId?: string;
-			type?: "bash" | "task";
+			type?: AsyncJobType;
 			label?: string;
 			durationMs?: number;
-			jobs?: Array<{ jobId?: string; type?: "bash" | "task"; label?: string; durationMs?: number }>;
+			jobs?: Array<{ jobId?: string; type?: AsyncJobType; label?: string; durationMs?: number }>;
 		}>
 	).details;
 	const jobs =
@@ -63,7 +65,7 @@ export function buildAsyncResultBlock(message: CustomOrHookMessage): TranscriptB
 			.join(" ");
 		block.addChild(new Text(line, 1, 0));
 	}
-	return block;
+	return new ToolActivityContainer(block);
 }
 
 /**

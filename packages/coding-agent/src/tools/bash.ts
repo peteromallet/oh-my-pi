@@ -8,9 +8,14 @@ import type {
 	ToolApprovalDecision,
 } from "@oh-my-pi/pi-agent-core";
 import type { Component } from "@oh-my-pi/pi-tui";
-import { getKeybindings, ImageProtocol, TERMINAL } from "@oh-my-pi/pi-tui";
+import { ImageProtocol, TERMINAL } from "@oh-my-pi/pi-tui";
 import { getProjectDir, isEnoent, logger, prompt } from "@oh-my-pi/pi-utils";
-import { formatKeyHints } from "../config/keybindings";
+import {
+	DEFAULT_AUTO_BACKGROUND_THRESHOLD_MS,
+	formatBackgroundNotice,
+	raceJobSettlement,
+	resolveAutoBackgroundWaitMs,
+} from "../async";
 import type { Settings } from "../config/settings";
 import { applyDirenvPreflight, type BashResult, executeBash } from "../exec/bash-executor";
 import type { RenderResultOptions } from "../extensibility/custom-tools/types";
@@ -58,7 +63,6 @@ import { clampTimeout, TOOL_TIMEOUTS } from "./tool-timeouts";
 export const BASH_DEFAULT_PREVIEW_LINES = DEFAULT_TERMINAL_PREVIEW_LINES;
 
 const BASH_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const DEFAULT_AUTO_BACKGROUND_THRESHOLD_MS = 60_000;
 const BASH_APPROVAL_SHELL_CONTROL_CHARS: Record<string, true> = {
 	"\n": true,
 	"\r": true,
@@ -167,7 +171,13 @@ function shellBuiltinsDisabled(settings: Settings): boolean {
  */
 export const CRITICAL_BASH_PATTERNS = [
 	// Recursive destruction.
-	/\brm\s+-[a-z]*[rRfF][a-z]*\s+\//i, // rm -rf /, rm -fr /, rm -r /, rm -f /…
+	// Options may sit on either side of the recursive/force flag, so only that flag is pinned and
+	// any other options are skipped: `rm -rf /`, `rm -rf -- /`, `rm --recursive --force /`,
+	// `rm -rf -v /`, `rm -v -rf /`. An absolute target is still required.
+	/\brm\s+(?:-\S+\s+)*(?:-[a-z]*[rRfF][a-z]*|--recursive|--force)\s+(?:-\S+\s+)*\//i,
+	// `--no-preserve-root` defeats coreutils' own refusal to recurse on `/`, so it is critical
+	// wherever it appears — including forms this list would otherwise reach only via the target.
+	/\brm\s+(?:-\S+\s+)*--no-preserve-root\b/i,
 	/\bsudo\s+rm\b/i, // any `sudo rm`.
 	/\bchmod\s+-R\s+[0-7]+\s+\//i, // `chmod -R 777 /`.
 	/\bchmod\s+-R\s+[ugoa+\-=rwxXst,]+\s+\//, // `chmod -R u+x /`, `chmod -R u+rwx,o+w /etc` (symbolic mode, root target).
@@ -498,10 +508,6 @@ function formatWallTimeNotice(wallTimeMs: number): string {
 
 function formatExitCodeNotice(exitCode: number): string {
 	return `Command exited with code ${exitCode}`;
-}
-
-function formatBackgroundNotice(jobId: string): string {
-	return `Backgrounded as job ${jobId}; result will be delivered automatically.`;
 }
 
 /**
@@ -889,83 +895,8 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 		};
 	}
 
-	async #waitForManagedBashJob(
-		job: ManagedBashJobHandle,
-		thresholdMs: number,
-		signal?: AbortSignal,
-		steeringSignal?: AbortSignal,
-		backgroundSignal?: AbortSignal,
-	): Promise<
-		ManagedBashJobCompletion | { kind: "running" } | { kind: "steer" } | { kind: "background" } | { kind: "aborted" }
-	> {
-		if (signal?.aborted) {
-			return { kind: "aborted" };
-		}
-		if (steeringSignal?.aborted) {
-			return { kind: "steer" };
-		}
-		if (backgroundSignal?.aborted) {
-			return { kind: "background" };
-		}
-
-		// Cancellable threshold: a bare Bun.sleep(thresholdMs) leaves a live, ref'd
-		// timer for the full threshold after the command finishes (or abort/steer)
-		// wins the race first — delaying SDK/headless shutdown and accumulating
-		// timers under fast command rates. Settle a withResolvers promise from
-		// setTimeout so the finally can clear it regardless of which waiter wins.
-		const { promise: thresholdPromise, resolve: resolveThreshold } = Promise.withResolvers<{
-			kind: "running";
-		}>();
-		const thresholdTimer = setTimeout(() => resolveThreshold({ kind: "running" }), thresholdMs);
-		const waiters: Array<
-			Promise<
-				| ManagedBashJobCompletion
-				| { kind: "running" }
-				| { kind: "steer" }
-				| { kind: "background" }
-				| { kind: "aborted" }
-			>
-		> = [job.completion, thresholdPromise];
-
-		const { promise: abortedPromise, resolve: resolveAborted } = Promise.withResolvers<{ kind: "aborted" }>();
-		const onAbort = () => resolveAborted({ kind: "aborted" });
-		const { promise: steerPromise, resolve: resolveSteer } = Promise.withResolvers<{ kind: "steer" }>();
-		const onSteer = () => resolveSteer({ kind: "steer" });
-		const { promise: backgroundPromise, resolve: resolveBackground } = Promise.withResolvers<{
-			kind: "background";
-		}>();
-		const onBackground = () => resolveBackground({ kind: "background" });
-		if (signal) {
-			signal.addEventListener("abort", onAbort, { once: true });
-			waiters.push(abortedPromise);
-		}
-		if (steeringSignal) {
-			steeringSignal.addEventListener("abort", onSteer, { once: true });
-			waiters.push(steerPromise);
-		}
-		if (backgroundSignal) {
-			backgroundSignal.addEventListener("abort", onBackground, { once: true });
-			waiters.push(backgroundPromise);
-		}
-		try {
-			return await Promise.race(waiters);
-		} finally {
-			clearTimeout(thresholdTimer);
-			signal?.removeEventListener("abort", onAbort);
-			steeringSignal?.removeEventListener("abort", onSteer);
-			backgroundSignal?.removeEventListener("abort", onBackground);
-		}
-	}
-
-	#resolveAutoBackgroundWaitMs(timeoutMs: number | undefined): number {
-		if (this.#autoBackgroundThresholdMs <= 0) return 0;
-		if (timeoutMs === undefined) return this.#autoBackgroundThresholdMs;
-		const timeoutBufferMs = 1_000;
-		return Math.max(0, Math.min(this.#autoBackgroundThresholdMs, timeoutMs - timeoutBufferMs));
-	}
-
 	async execute(
-		toolCallId: string,
+		_toolCallId: string,
 		{
 			command: rawCommand,
 			env: rawEnv,
@@ -1115,7 +1046,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			autoBgManager &&
 			!autoBgManager.atCapacity
 		) {
-			const autoBackgroundWaitMs = this.#resolveAutoBackgroundWaitMs(timeoutMs);
+			const autoBackgroundWaitMs = resolveAutoBackgroundWaitMs(this.#autoBackgroundThresholdMs, timeoutMs);
 			const startBackgrounded = autoBackgroundWaitMs === 0;
 			const job = this.#startManagedBashJob({
 				command,
@@ -1139,28 +1070,12 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			// foreground-wait cannot also be injected by the delivery loop. Lifted
 			// via resumeDeliveries() if we end up backgrounding after all.
 			autoBgManager.acknowledgeDeliveries([job.jobId]);
-			// Register this foreground wait as backgroundable so the user's
-			// background key targets exactly this tool call (and only aborts a
-			// batch that contains it — a wait that already ended is never
-			// re-targeted).
-			this.session.registerBackgroundableBashWait?.(toolCallId);
-			let waitResult:
-				| ManagedBashJobCompletion
-				| { kind: "running" }
-				| { kind: "steer" }
-				| { kind: "background" }
-				| { kind: "aborted" };
-			try {
-				waitResult = await this.#waitForManagedBashJob(
-					job,
-					autoBackgroundWaitMs,
-					signal,
-					ctx?.toolCall?.steeringSignal,
-					ctx?.toolCall?.backgroundSignal,
-				);
-			} finally {
-				this.session.unregisterBackgroundableBashWait?.(toolCallId);
-			}
+			const waitResult = await raceJobSettlement(
+				job.completion,
+				autoBackgroundWaitMs,
+				signal,
+				ctx?.toolCall?.steeringSignal,
+			);
 			if (waitResult.kind === "completed") {
 				return waitResult.result;
 			}
@@ -1175,20 +1090,10 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 			autoBgManager.resumeDeliveries([job.jobId]);
 			// "steer": a queued user/peer message arrived mid-wait — background
 			// the command (it keeps running) so the message injects promptly.
-			// "background": the user pressed the background key — same
-			// transition, no message involved. The key label is resolved from
-			// the live keybinding so a remapped action reads correctly. The
-			// notice teaches the model how to re-follow the job if needed.
-			const backgroundKey = formatKeyHints(getKeybindings().getKeys("app.background")) || "the background key";
 			const notices =
 				waitResult.kind === "steer"
 					? [...pendingNotices, "Backgrounded early to handle an incoming message; the command keeps running."]
-					: waitResult.kind === "background"
-						? [
-								...pendingNotices,
-								`Backgrounded via ${backgroundKey}; the command keeps running as job ${job.jobId} — follow with hub (op: "wait"), or it delivers automatically when done.`,
-							]
-						: pendingNotices;
+					: pendingNotices;
 			return this.#buildBackgroundStartResult(job.jobId, job.getLatestText(), timeoutSec, {
 				requestedTimeoutSec,
 				notices,
@@ -1571,8 +1476,6 @@ export interface ShellRendererConfig<TArgs> {
 	resolveCwd?: (args: TArgs | undefined) => string | undefined;
 	resolveEnv?: (args: TArgs | undefined) => Record<string, unknown> | undefined;
 	showHeader?: boolean;
-	/** Optional live affordance line appended while the call is running. */
-	runningHint?: (args: TArgs | undefined, options: RenderResultOptions) => string | undefined;
 }
 
 function getPartialJson<TArgs>(args: TArgs | undefined): string | undefined {
@@ -1639,15 +1542,11 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 									},
 									uiTheme,
 								);
-					const running = options.spinnerFrame !== undefined;
-					const hint = running ? config.runningHint?.(args, options) : undefined;
-					const cmdPreview = capPreviewLines(cmdLines, uiTheme, { expanded: options.expanded });
-					const lines = hint ? [...cmdPreview, uiTheme.fg("dim", hint)] : cmdPreview;
 					return outputBlock.render(
 						{
 							header,
-							state: running ? "running" : "pending",
-							sections: [{ lines }],
+							state: options.spinnerFrame !== undefined ? "running" : "pending",
+							sections: [{ lines: capPreviewLines(cmdLines, uiTheme, { expanded: options.expanded }) }],
 							width,
 						},
 						uiTheme,
@@ -1876,15 +1775,4 @@ export const bashToolRenderer = createShellRenderer<BashRenderArgs>({
 	resolveCwd: args => args?.cwd,
 	resolveEnv: args => args?.env,
 	showHeader: false,
-	// Live affordance while the call runs: `esc` interrupts; the background key
-	// (Ctrl+Alt+B by default) moves the wait to the background so the command
-	// keeps running as an async job. The background segment is omitted for PTY
-	// calls (which never take the managed auto-background path) or when the
-	// action has no bound key. Resolved against the configured keys.
-	runningHint: args => {
-		const isPty = (args as { pty?: boolean } | undefined)?.pty === true;
-		const backgroundKey = formatKeyHints(getKeybindings().getKeys("app.background"));
-		const backgroundPart = isPty || !backgroundKey ? "" : ` · ${backgroundKey} background`;
-		return `${formatKeyHints(getKeybindings().getKeys("app.interrupt"))} interrupt${backgroundPart}`;
-	},
 });

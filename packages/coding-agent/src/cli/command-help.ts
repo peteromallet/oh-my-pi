@@ -34,6 +34,10 @@ export const completionsHelp = {
 
 export const completeHelp = { hidden: true } satisfies CommandMetadata;
 
+export const compressHelp = {
+	description: "Rewrite a text file into the dense prompt register, reporting what it drops",
+} satisfies CommandMetadata;
+
 export const configHelp = { description: "Manage configuration settings" } satisfies CommandMetadata;
 
 export const dryBalanceHelp = {
@@ -61,6 +65,10 @@ export const joinHelp = { description: "Join a shared collab session (same as /j
 export const modelsHelp = { description: "List, search, and refresh available models" } satisfies CommandMetadata;
 
 export const pluginHelp = { description: "Manage plugins (install, uninstall, list, etc.)" } satisfies CommandMetadata;
+
+export const psHelp = {
+	description: "List and control daemon-supervised background processes (logs, stop, kill, restart)",
+} satisfies CommandMetadata;
 
 export const readHelp = {
 	description: "Show what the read tool will return for a path, URL, or internal URI",

@@ -9,7 +9,7 @@
  *
  * Kept apart from `cursor/exec-modern.ts` on purpose: these are pure
  * string/path functions with no protobuf coupling, while that module pulls in
- * `@bufbuild/protobuf` and the generated `agent_pb` graph. The legacy shim is
+ * the generated cursor protobuf graph. The legacy shim is
  * compiled into the bundled virtual module registry, so importing it from a
  * nested path would drag the whole exec implementation in with it — and
  * `./providers/*` is a single-segment wildcard export that cannot serve a
@@ -162,4 +162,26 @@ export function piLimit(limit: number | undefined): number | undefined {
  */
 export function piTimeout(timeout: number | undefined): number | undefined {
 	return timeout !== undefined && timeout >= 0 ? timeout : undefined;
+}
+
+/**
+ * Drop keys whose value is `undefined` so optional local-tool kwargs stay
+ * absent rather than present-as-undefined.
+ *
+ * The Cursor exec bridge historically wrote forms like
+ * `cwd: workingDirectory || undefined` and
+ * `case: caseInsensitive === true ? false : undefined`. ArkType rejects a
+ * present `undefined` on an optional field (`was undefined`) even though
+ * omitting the key is valid — which flooded Cursor sessions with bash/grep
+ * validation errors for otherwise fine frames.
+ */
+export function omitUndefinedArgs<T extends Record<string, unknown>>(
+	args: T,
+): { [K in keyof T]?: Exclude<T[K], undefined> } {
+	const out: Record<string, unknown> = {};
+	for (const key of Object.keys(args)) {
+		const value = args[key];
+		if (value !== undefined) out[key] = value;
+	}
+	return out as { [K in keyof T]?: Exclude<T[K], undefined> };
 }
