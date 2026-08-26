@@ -1,3 +1,4 @@
+import { ACTIVE_IDENTITY } from "../prompt/agent-identity";
 import { type Component, type OverlayFocusOwner } from "../tui";
 import { formatKeyHint } from "../app-keybindings";
 import { editorKey, editorKeys } from "../chrome/keybinding-hints";
@@ -6,7 +7,7 @@ import { centerLine, padding } from "../utils";
 import { padToWidth } from "../render/utils";
 import { routeSgrMouseInput, type SgrMouseEvent } from "../mouse";
 import { APP_NAME } from "@oh-my-pi/pi-utils";
-import { gradientLogo, logoNode, PI_LOGO } from "../prompt/welcome";
+import { gradientLogo, logoNode } from "../prompt/welcome";
 import { theme } from "../theme/theme";
 import { col, node, span, text } from "../native/describe";
 import type { NativeNode, NativeUiEvent } from "../native/node";
@@ -256,7 +257,7 @@ export class SetupWizardComponent implements Component, OverlayFocusOwner {
 				[
 					col(
 						[
-							logoNode(PI_LOGO, false),
+							logoNode(ACTIVE_IDENTITY.logo, false),
 							text([span(APP_NAME, "accent strong")], { wrap: "none" }),
 							text([span(`Setup step ${this.#sceneIndex + 1} of ${this.scenes.length}`, "muted")], {
 								wrap: "none",
@@ -279,7 +280,7 @@ export class SetupWizardComponent implements Component, OverlayFocusOwner {
 		const title = this.#activeScene?.title ?? scene?.title ?? "Setup";
 		const subtitle = this.#activeScene?.subtitle;
 		const contentWidth = Math.max(MIN_CONTENT_WIDTH, width - SCENE_MARGIN_X * 2);
-		const logo = gradientLogo(PI_LOGO, 0);
+		const logo = gradientLogo(ACTIVE_IDENTITY.logo, 0, undefined, ACTIVE_IDENTITY.gradient);
 		const header = [
 			"",
 			...logo.map(line => centerLine(line, width)),
