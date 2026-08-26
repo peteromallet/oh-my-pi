@@ -25,6 +25,7 @@ import {
 	VERSION,
 } from "@oh-my-pi/pi-utils/dirs";
 import { interceptUnhandledRejections } from "@oh-my-pi/pi-utils/postmortem";
+import { ACTIVE_IDENTITY } from "./modes/components/agent-identity";
 import { setProcessName } from "@oh-my-pi/pi-utils/process-name";
 import { declareWorkerHostEntry, installWorkerInbox, isWorkerHostSelector } from "@oh-my-pi/pi-utils/worker-host";
 import { installProfileAlias, resolveProfileAliasCommandFromProcess } from "./cli/profile-alias";
@@ -45,7 +46,8 @@ if (Bun.semver.order(Bun.version, MIN_BUN_VERSION) < 0) {
 	process.exit(1);
 }
 
-setProcessName(APP_NAME);
+// Per-instance process title: ps shows the active agent's id.
+setProcessName(ACTIVE_IDENTITY.id);
 
 // `Bun.build`-API compiled Windows executables report `import.meta.main ===
 // false`: the standalone loader keys the entry module with native backslashes

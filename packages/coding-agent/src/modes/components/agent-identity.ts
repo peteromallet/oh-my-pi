@@ -39,6 +39,12 @@ export interface AgentIdentity {
 	gradient: GradientPalette;
 	/** Fixed-color cells layered over the gradient (accents, eyes, sparks). */
 	cellOverrides?: readonly LogoCellOverride[];
+	/**
+	 * Deep tint layer: theme color names -> hex, merged over the active
+	 * theme at load time. Affects every themed surface (accents, borders,
+	 * status colors), not just the logo.
+	 */
+	themeColors?: Readonly<Record<string, string>>;
 }
 
 /** Oh My Pi face — the upstream default (pink → violet → cyan → mint). */
@@ -99,6 +105,10 @@ export const ARNOLD_IDENTITY: AgentIdentity = {
 	},
 	// Glowing eyes: the two notches on the right edge of the fist, warm white
 	// so they read as lit cutouts against the sunset ramp.
+	themeColors: {
+		accent: "#ffa028",
+		borderAccent: "#ffb347",
+	},
 	cellOverrides: [
 		{ row: 6, col: 6, color: "#fff3e0", char: "▘" },
 		{ row: 6, col: 7, color: "#fff3e0", char: "▝" },

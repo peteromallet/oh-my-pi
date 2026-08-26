@@ -87,6 +87,10 @@ export const onboardHelp = {
 	description: "detect-first provider onboarding (differs from setup: finds what you already have)",
 } satisfies CommandMetadata;
 
+export const identityHelp = {
+	description: "Scaffold a per-agent visual identity (logo art, colors)",
+} satisfies CommandMetadata;
+
 export const setupHelp = {
 	description: "Run onboarding setup or install dependencies for optional features",
 } satisfies CommandMetadata;

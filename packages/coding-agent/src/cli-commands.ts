@@ -127,6 +127,11 @@ export const commands: CommandEntry[] = [
 		help: commandHelp.onboardHelp,
 	},
 	{
+		name: "identity",
+		load: () => import("./commands/identity").then(m => m.default),
+		help: commandHelp.identityHelp,
+	},
+	{
 		name: "plugin",
 		load: () => import("./commands/plugin").then(m => m.default),
 		help: commandHelp.pluginHelp,
