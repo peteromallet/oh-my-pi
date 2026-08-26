@@ -104,10 +104,12 @@ export function buildProviderItems(
 		let glyph: string;
 		switch (row.status) {
 			case "ready":
+				// Green filled dot: unmistakably wired.
 				glyph = theme.fg("success", theme.status.enabled);
 				break;
 			case "candidate":
-				glyph = theme.fg("muted", theme.status.enabled);
+				// Hollow dot: detected elsewhere but not wired yet.
+				glyph = theme.fg("muted", theme.status.shadowed);
 				break;
 			default:
 				glyph = theme.fg("dim", theme.status.shadowed);
