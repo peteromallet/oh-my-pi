@@ -8,6 +8,7 @@ import {
 	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
 import { APP_NAME } from "@oh-my-pi/pi-utils";
+import { ACTIVE_IDENTITY, type GradientPalette } from "./agent-identity";
 import { theme } from "../../modes/theme/theme";
 import tipsText from "./tips.txt" with { type: "text" };
 
@@ -240,7 +241,10 @@ export class WelcomeComponent implements Component {
 		}
 		const dualContentWidth = boxWidth - 3; // 3 = │ + │ + │
 		const preferredLeftCol = 26;
-		const minLeftCol = 12; // logo width
+		const minLeftCol = Math.max(
+			12,
+			Math.max(...ACTIVE_IDENTITY.logo.map(l => visibleWidth(l))) + 2,
+		); // logo width + breathing room
 		const minRightCol = 20;
 		const leftMinContentWidth = Math.max(
 			minLeftCol,
@@ -446,26 +450,20 @@ export class WelcomeComponent implements Component {
 
 	/** Pick the logo frame for the current intro phase, or the resting frame. */
 	#currentLogoFrame(): readonly string[] {
-		if (this.#animStart == null) return REST_FRAME;
+		if (this.#animStart == null) return restFrameFor(ACTIVE_IDENTITY);
 		const elapsed = performance.now() - this.#animStart;
-		if (elapsed >= INTRO_MS) return REST_FRAME;
+		if (elapsed >= INTRO_MS) return restFrameFor(ACTIVE_IDENTITY);
 		return introLogoFrame(elapsed / INTRO_MS);
 	}
 }
 
 export const PI_LOGO = ["▀██████████▀", " ╘██    ██  ", "  ██    ██  ", "  ██    ██  ", " ▄██▄  ▄██▄ "];
 
-/** Multi-stop palette for the diagonal gradient. */
-const GRADIENT_STOPS: ReadonlyArray<readonly [number, number, number]> = [
-	[255, 92, 200], // hot pink
-	[200, 110, 255], // violet
-	[120, 130, 255], // periwinkle
-	[60, 200, 255], // bright cyan
-	[120, 255, 220], // mint
-];
-
-/** 256-color ramp fallback when truecolor isn't available. */
-const GRADIENT_RAMP_256 = [199, 171, 135, 99, 75, 51, 87];
+/**
+ * Multi-stop palette for the diagonal gradient. Defaults to the Oh My Pi face;
+ * per-agent palettes arrive via {@link GradientPalette} (agent-identity.ts).
+ */
+const DEFAULT_PALETTE: GradientPalette = ACTIVE_IDENTITY.gradient;
 
 /** Half-width of the shine highlight band, expressed in gradient-t units. */
 const SHINE_HALF_WIDTH = 0.18;
@@ -483,13 +481,17 @@ export interface ShineConfig {
  * Shared by {@link gradientLogo} and the setup splash so both stay
  * color-identical (truecolor when available, 256-color ramp otherwise).
  */
-export function gradientEscape(t: number, shine?: ShineConfig): string {
+export function gradientEscape(
+	t: number,
+	shine?: ShineConfig,
+	palette: GradientPalette = ACTIVE_IDENTITY.gradient,
+): string {
 	const shineStrength = shine && shine.strength > 0 ? shine.strength : 0;
 	const shinePos = shine ? shine.pos : 0;
 	if (TERMINAL.trueColor) {
 		// 5-stop palette widens the visible color range and avoids the
 		// deep-blue valley a naive HSL lerp falls into.
-		const stops = GRADIENT_STOPS;
+		const stops = palette.stops;
 		const seg = t * (stops.length - 1);
 		const i = Math.min(stops.length - 2, Math.floor(seg));
 		const f = seg - i;
@@ -509,7 +511,7 @@ export function gradientEscape(t: number, shine?: ShineConfig): string {
 		}
 		return `\x1b[38;2;${Math.round(r)};${Math.round(g)};${Math.round(bl)}m`;
 	}
-	const ramp = GRADIENT_RAMP_256;
+	const ramp = palette.ramp256;
 	let idx = Math.min(ramp.length - 1, Math.max(0, Math.floor(t * (ramp.length - 1) + 0.5)));
 	if (shineStrength > 0) {
 		const dist = Math.abs(t - shinePos);
@@ -526,7 +528,12 @@ export function gradientEscape(t: number, shine?: ShineConfig): string {
  * gradient along the diagonal, wrapping at 1. When `shine` is provided, a soft
  * white highlight is composited on top, centered at `shine.pos`.
  */
-export function gradientLogo(lines: readonly string[], phase = 0, shine?: ShineConfig): string[] {
+export function gradientLogo(
+	lines: readonly string[],
+	phase = 0,
+	shine?: ShineConfig,
+	palette: GradientPalette = ACTIVE_IDENTITY.gradient,
+): string[] {
 	const reset = "\x1b[0m";
 	const rows = lines.length;
 	const cols = Math.max(...lines.map(l => l.length));
@@ -544,7 +551,7 @@ export function gradientLogo(lines: readonly string[], phase = 0, shine?: ShineC
 			// Diagonal: bottom-left (x=0, y=rows-1) → top-right (x=cols-1, y=0)
 			const base = (x + (rows - 1 - y)) / span;
 			const t = (((base + phase) % 1) + 1) % 1;
-			result += gradientEscape(t, shine) + char + reset;
+			result += gradientEscape(t, shine, palette) + char + reset;
 		}
 		return result;
 	});
@@ -574,8 +581,23 @@ function introLogoFrame(progress: number): string[] {
 	const phase = ((((1 - eased) * INTRO_SWEEPS) % 1) + 1) % 1;
 	const shinePos = (((progress * INTRO_SHINE_TRAVERSALS) % 1) + 1) % 1;
 	const shineStrength = (1 - eased) ** 1.5;
-	return gradientLogo(PI_LOGO, phase, { strength: shineStrength, pos: shinePos });
+	return gradientLogo(
+		ACTIVE_IDENTITY.logo,
+		phase,
+		{ strength: shineStrength, pos: shinePos },
+		ACTIVE_IDENTITY.gradient,
+	);
 }
 
-/** Resting gradient frame, cached for re-renders outside of the intro. */
-const REST_FRAME = gradientLogo(PI_LOGO, 0);
+/** Resting frame cache keyed by logo contents (one identity per runtime). */
+const REST_FRAMES = new Map<string, readonly string[]>();
+
+function restFrameFor(identity: { logo: readonly string[]; gradient: GradientPalette }): readonly string[] {
+	const key = identity.logo.join("\n");
+	let frame = REST_FRAMES.get(key);
+	if (!frame) {
+		frame = gradientLogo(identity.logo, 0, undefined, identity.gradient);
+		REST_FRAMES.set(key, frame);
+	}
+	return frame;
+}
