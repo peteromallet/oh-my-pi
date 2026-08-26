@@ -183,7 +183,14 @@ export default async function scanProvidersLive(): Promise<ScanEntry[]> {
 	return scanProviders({
 		registry: PROVIDER_REGISTRY,
 		auth: authStorage,
-		envApiKeyName: getEnvApiKeyName,
+		// A provider's env-var NAME existing in the catalog proves nothing;
+		// only report env-ready when the variable is actually set.
+		envApiKeyName: (id) => {
+			const name = getEnvApiKeyName(id);
+			if (!name) return undefined;
+			const value = Bun.env[name];
+			return value && value.trim() !== "" ? name : undefined;
+		},
 		homeDir: os.homedir(),
 		modelsYmlProviders,
 	});
