@@ -15,6 +15,16 @@ export interface GradientPalette {
 	ramp256: readonly number[];
 }
 
+/** Paint one logo cell a fixed color (and optionally a different glyph),
+ * bypassing the gradient. Coordinates index the standard-size `logo` grid;
+ * callers scale them for enlarged renders. */
+export interface LogoCellOverride {
+	row: number;
+	col: number;
+	color: string;
+	char?: string;
+}
+
 export interface AgentIdentity {
 	/** Lowercase registry key; matches APP_NAME-style naming. */
 	id: string;
@@ -23,6 +33,8 @@ export interface AgentIdentity {
 	/** Standard-size mark (welcome sidebar, wizard header, outro). */
 	logo: readonly string[];
 	gradient: GradientPalette;
+	/** Fixed-color cells layered over the gradient (accents, eyes, sparks). */
+	cellOverrides?: readonly LogoCellOverride[];
 }
 
 /** Oh My Pi face — the upstream default (pink → violet → cyan → mint). */
@@ -77,6 +89,14 @@ export const ARNOLD_IDENTITY: AgentIdentity = {
 		],
 		ramp256: [130, 166, 202, 208, 214, 220, 222],
 	},
+	// Glowing eyes: the two notches on the right edge of the fist, warm white
+	// so they read as lit cutouts against the sunset ramp.
+	cellOverrides: [
+		{ row: 6, col: 6, color: "#fff3e0", char: "▘" },
+		{ row: 6, col: 7, color: "#fff3e0", char: "▝" },
+		{ row: 7, col: 6, color: "#fff3e0", char: "▖" },
+		{ row: 7, col: 7, color: "#fff3e0", char: "▗" },
+	],
 };
 
 const REGISTRY: Readonly<Record<string, AgentIdentity>> = {
@@ -92,3 +112,19 @@ export function getAgentIdentity(name: string = APP_NAME): AgentIdentity {
 
 /** The identity this runtime was branded with. */
 export const ACTIVE_IDENTITY: AgentIdentity = getAgentIdentity();
+
+/** Expand standard-grid overrides to a doubled render (each cell -> 2x2). */
+export function scaleCellOverrides(
+	overrides: readonly LogoCellOverride[] | undefined,
+): LogoCellOverride[] | undefined {
+	if (!overrides?.length) return undefined;
+	const scaled: LogoCellOverride[] = [];
+	for (const o of overrides) {
+		for (const dy of [0, 1]) {
+			for (const dx of [0, 1]) {
+				scaled.push({ row: o.row * 2 + dy, col: o.col * 2 + dx, color: o.color, char: o.char });
+			}
+		}
+	}
+	return scaled;
+}
