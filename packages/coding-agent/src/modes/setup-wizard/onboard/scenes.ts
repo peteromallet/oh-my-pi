@@ -30,6 +30,7 @@ import {
 	SelectList,
 	type SgrMouseEvent,
 	wrapTextWithAnsi,
+	visibleWidth,
 } from "@oh-my-pi/pi-tui";
 import { getAgentDir, postmortem } from "@oh-my-pi/pi-utils";
 import { copyToClipboard } from "../../../utils/clipboard";
@@ -115,8 +116,8 @@ export function buildProviderItems(
 				glyph = theme.fg("dim", theme.status.shadowed);
 		}
 		const descriptionParts: string[] = [];
-		if (row.origin) descriptionParts.push(row.origin.detail);
 		if (row.defaultModel) descriptionParts.push(`model: ${row.defaultModel}`);
+		if (row.origin) descriptionParts.push(row.origin.detail);
 		if (row === preferred) descriptionParts.push("recommended");
 		return {
 			value: row.provider,
@@ -221,7 +222,10 @@ class OnboardDetectPickController implements SetupSceneController {
 			return;
 		}
 		const preferred = preselectedEntry(rows);
-		const list = new SelectList(items, Math.min(10, Math.max(1, items.length)), getSelectListTheme());
+		const primaryWidth = Math.max(...items.map(item => visibleWidth(item.label))) + 2;
+		const list = new SelectList(items, Math.min(10, Math.max(1, items.length)), getSelectListTheme(), {
+			maxPrimaryColumnWidth: primaryWidth,
+		});
 		list.setSelectedIndex(Math.max(0, rows.indexOf(preferred ?? rows[0]!)));
 		list.onSelect = item => {
 			if (item.value === "show-all") {
@@ -649,7 +653,10 @@ class OnboardWireVerifyController implements SetupSceneController {
 			void postmortem.quit(1);
 			return;
 		}
-		const list = new SelectList(items, Math.min(10, Math.max(1, items.length)), getSelectListTheme());
+		const primaryWidth = Math.max(...items.map(item => visibleWidth(item.label))) + 2;
+		const list = new SelectList(items, Math.min(10, Math.max(1, items.length)), getSelectListTheme(), {
+			maxPrimaryColumnWidth: primaryWidth,
+		});
 		const preferred = preselectedEntry(remaining);
 		list.setSelectedIndex(Math.max(0, remaining.indexOf(preferred ?? remaining[0]!)));
 		list.onSelect = item => {
