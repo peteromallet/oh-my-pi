@@ -1,17 +1,12 @@
-# OMP Coding Agent Installer for Windows
-# Usage: irm https://omp.sh/install.ps1 | iex
+# Astrid's OMP build installer for Windows (peteromallet/oh-my-pi)
+# Usage: irm https://raw.githubusercontent.com/peteromallet/oh-my-pi/main/scripts/install.ps1 | iex
+#
+# This fork publishes no npm package or prebuilt releases (the npm package and
+# release binaries are upstream OMP), so it always installs from this
+# repository's source with bun, installing bun first if needed.
 #
 # Or with options:
-#   & ([scriptblock]::Create((irm https://omp.sh/install.ps1))) -Source
-#   & ([scriptblock]::Create((irm https://omp.sh/install.ps1))) -Binary
-#   & ([scriptblock]::Create((irm https://omp.sh/install.ps1))) -Source -Ref v18.8.9
-#   & ([scriptblock]::Create((irm https://omp.sh/install.ps1))) -Source -Ref main
-#   & ([scriptblock]::Create((irm https://omp.sh/install.ps1))) -Binary -Ref v18.8.9
-#
-# -Ref takes any tag/commit/branch with -Source; binary installs take a release
-# tag (v<version>). Prebuilt binaries come from the build service
-# ($env:PI_BUILD_URL, default https://build.stencil.so) and are checked against
-# its sha256 before install.
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/peteromallet/oh-my-pi/main/scripts/install.ps1))) -Ref main
 
 param(
     [switch]$Source,
@@ -29,7 +24,7 @@ if ($PSVersionTable.PSVersion -lt [version]"5.1") {
     throw "Windows PowerShell 5.1 or newer is required (found $($PSVersionTable.PSVersion)). Install PowerShell 7 from https://aka.ms/powershell and re-run the installer."
 }
 
-$Repo = "can1357/oh-my-pi"
+$Repo = "peteromallet/oh-my-pi"
 $Package = "@oh-my-pi/pi-coding-agent"
 $InstallDir = if ($env:PI_INSTALL_DIR) { $env:PI_INSTALL_DIR } else { "$env:LOCALAPPDATA\omp" }
 $BuildUrl = if ($env:PI_BUILD_URL) { $env:PI_BUILD_URL.TrimEnd("/") } else { "https://build.stencil.so" }
@@ -352,24 +347,20 @@ function Install-Binary {
 }
 
 # Main logic
-if ($Ref -and -not $Source -and -not $Binary) {
-    $Source = $true
+# This fork installs from source: always clone it (main unless a ref is given),
+# never the upstream npm package or upstream release binaries.
+if (-not $Ref) {
+    $Ref = "main"
 }
 
-if ($Source) {
-    if (-not (Test-BunInstalled)) {
-        Install-Bun
-    }
-    Assert-BunVersion $MinimumBunVersion
-    Install-ViaBun
-} elseif ($Binary) {
-    Install-Binary
-} else {
-    # Default: use bun if available, otherwise binary
-    if (Test-BunInstalled) {
-        Assert-BunVersion $MinimumBunVersion
-        Install-ViaBun
-    } else {
-        Install-Binary
-    }
+if ($Binary) {
+    Write-Host "This fork ($Repo) doesn't publish prebuilt binaries."
+    Write-Host "Run the installer without -Binary to install from source with bun."
+    exit 1
 }
+
+if (-not (Test-BunInstalled)) {
+    Install-Bun
+}
+Assert-BunVersion $MinimumBunVersion
+Install-ViaBun
