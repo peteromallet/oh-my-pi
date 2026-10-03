@@ -1,16 +1,20 @@
 #!/bin/sh
 set -e
 
-# OMP Coding Agent Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.sh | sh
+# Astrid's OMP build installer (peteromallet/oh-my-pi)
+# Usage: curl -fsSL https://raw.githubusercontent.com/peteromallet/oh-my-pi/main/scripts/install.sh | sh
+#
+# This fork publishes no npm package or prebuilt releases (the npm package and
+# release binaries are upstream OMP), so it always installs from this
+# repository's source with bun, installing bun first if needed.
 #
 # Options:
-#   --source       Install via bun (installs bun if needed)
-#   --binary       Always install prebuilt binary
-#   --ref <ref>    Install specific tag/commit/branch
+#   --source       Install from source via bun (the default; installs bun if needed)
+#   --binary       Prebuilt binaries are not published for this fork; exits with guidance
+#   --ref <ref>    Install a specific tag/commit/branch (default: main)
 #   -r <ref>       Shorthand for --ref
 
-REPO="can1357/oh-my-pi"
+REPO="peteromallet/oh-my-pi"
 PACKAGE="@oh-my-pi/pi-coding-agent"
 INSTALL_DIR="${PI_INSTALL_DIR:-$HOME/.local/bin}"
 MIN_BUN_VERSION="1.3.14"
@@ -61,9 +65,13 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# If a ref is provided, default to source install
-if [ -n "$REF" ] && [ -z "$MODE" ]; then
+# This fork installs from source: always clone it (main unless a ref is given),
+# never the upstream npm package or upstream release binaries.
+if [ -z "$MODE" ]; then
     MODE="source"
+fi
+if [ -z "$REF" ]; then
+    REF="main"
 fi
 
 # Check if bun is available
@@ -316,7 +324,9 @@ case "$MODE" in
         install_via_bun
         ;;
     binary)
-        install_binary
+        echo "This fork (${REPO}) doesn't publish prebuilt binaries."
+        echo "Run the installer without --binary to install from source with bun."
+        exit 1
         ;;
     *)
         # Default: use bun only when it matches the host architecture, otherwise

@@ -1,12 +1,12 @@
-# OMP Coding Agent Installer for Windows
-# Usage: irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1 | iex
+# Astrid's OMP build installer for Windows (peteromallet/oh-my-pi)
+# Usage: irm https://raw.githubusercontent.com/peteromallet/oh-my-pi/main/scripts/install.ps1 | iex
+#
+# This fork publishes no npm package or prebuilt releases (the npm package and
+# release binaries are upstream OMP), so it always installs from this
+# repository's source with bun, installing bun first if needed.
 #
 # Or with options:
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Source
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Binary
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Source -Ref v3.20.1
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Source -Ref main
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Binary -Ref v3.20.1
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/peteromallet/oh-my-pi/main/scripts/install.ps1))) -Ref main
 
 param(
     [switch]$Source,
@@ -16,7 +16,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "can1357/oh-my-pi"
+$Repo = "peteromallet/oh-my-pi"
 $Package = "@oh-my-pi/pi-coding-agent"
 $InstallDir = if ($env:PI_INSTALL_DIR) { $env:PI_INSTALL_DIR } else { "$env:LOCALAPPDATA\omp" }
 $BinaryName = "omp-windows-x64.exe"
@@ -286,24 +286,20 @@ function Install-Binary {
 }
 
 # Main logic
-if ($Ref -and -not $Source -and -not $Binary) {
-    $Source = $true
+# This fork installs from source: always clone it (main unless a ref is given),
+# never the upstream npm package or upstream release binaries.
+if (-not $Ref) {
+    $Ref = "main"
 }
 
-if ($Source) {
-    if (-not (Test-BunInstalled)) {
-        Install-Bun
-    }
-    Assert-BunVersion $MinimumBunVersion
-    Install-ViaBun
-} elseif ($Binary) {
-    Install-Binary
-} else {
-    # Default: use bun if available, otherwise binary
-    if (Test-BunInstalled) {
-        Assert-BunVersion $MinimumBunVersion
-        Install-ViaBun
-    } else {
-        Install-Binary
-    }
+if ($Binary) {
+    Write-Host "This fork ($Repo) doesn't publish prebuilt binaries."
+    Write-Host "Run the installer without -Binary to install from source with bun."
+    exit 1
 }
+
+if (-not (Test-BunInstalled)) {
+    Install-Bun
+}
+Assert-BunVersion $MinimumBunVersion
+Install-ViaBun
