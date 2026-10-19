@@ -152,8 +152,9 @@ class FakeAgentSession {
 	constructor(
 		cwd: string,
 		private readonly models: Model[] = TEST_MODELS,
+		sessionDir?: string,
 	) {
-		this.sessionManager = SessionManager.create(cwd);
+		this.sessionManager = SessionManager.create(cwd, sessionDir);
 		this.sessionId = this.sessionManager.getSessionId();
 		this.agent = {
 			sessionId: this.sessionId,
@@ -434,6 +435,7 @@ interface AgentHarness {
 	cwdA: string;
 	cwdB: string;
 	findSession(sessionId: string): FakeAgentSession | undefined;
+	createAgent(): AcpAgent;
 }
 
 function getChunkMessageId(notification: SessionNotification): string | undefined {
@@ -467,7 +469,10 @@ afterEach(async () => {
 });
 
 async function createHarness(
-	options: { elicitationHandler?: (req: CreateElicitationRequest) => Promise<CreateElicitationResponse> } = {},
+	options: {
+		elicitationHandler?: (req: CreateElicitationRequest) => Promise<CreateElicitationResponse>;
+		sessionDir?: (cwd: string, agentDir: string) => string;
+	} = {},
 ): Promise<AgentHarness> {
 	const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "omp-acp-test-"));
 	cleanupRoots.push(root);
@@ -494,15 +499,18 @@ async function createHarness(
 		closed: Promise.withResolvers<void>().promise,
 	} as unknown as AgentSideConnection;
 
-	const initialSession = new FakeAgentSession(cwdA);
+	const sessionDir = options.sessionDir?.(cwdA, agentDir);
+	const initialSession = new FakeAgentSession(cwdA, TEST_MODELS, sessionDir);
 	sessions.push(initialSession);
 	const factory = async (cwd: string): Promise<AgentSession> => {
-		const session = new FakeAgentSession(cwd);
+		const session = new FakeAgentSession(cwd, TEST_MODELS, sessionDir);
 		sessions.push(session);
 		return session as unknown as AgentSession;
 	};
 
-	const agent = new AcpAgent(connection, factory, initialSession as unknown as AgentSession);
+	const createAgent = (initial?: FakeAgentSession) =>
+		new AcpAgent(connection, factory, initial as unknown as AgentSession | undefined, { sessionDir });
+	const agent = createAgent(initialSession);
 	if (options.elicitationHandler) {
 		// Drive `initialize` so the agent caches `clientCapabilities.elicitation.form`
 		// and `#requestAcpPlanApprovalChoice` actually goes through the elicitation.
@@ -520,6 +528,7 @@ async function createHarness(
 		cwdA,
 		cwdB,
 		findSession: (sessionId: string) => sessions.find(session => session.sessionId === sessionId),
+		createAgent: () => createAgent(),
 	};
 }
 
@@ -530,6 +539,120 @@ async function advanceBootstrapGuard(): Promise<void> {
 }
 
 describe("ACP agent", () => {
+	it.each([
+		"external",
+		"legacy",
+	] as const)("recovers an explicit %s session store after restart and cwd pruning without relocating its transcript", async kind => {
+		const harness = await createHarness({
+			sessionDir: (cwd, agentDir) =>
+				kind === "external"
+					? path.join(agentDir, "..", "external-sessions")
+					: path.join(
+							agentDir,
+							"sessions",
+							`--${path
+								.resolve(cwd)
+								.replace(/^[/\\]/, "")
+								.replace(/[/\\:]/g, "-")}--`,
+						),
+		});
+		const stored = harness.sessions[0]!;
+		stored.sessionManager.appendMessage({ role: "user", content: "preserved question", timestamp: Date.now() });
+		stored.sessionManager.appendMessage(makeAssistantMessage("preserved answer"));
+		await stored.sessionManager.ensureOnDisk();
+		await stored.sessionManager.flush();
+		const sessionId = stored.sessionId;
+		const sessionFile = stored.sessionManager.getSessionFile()!;
+		await harness.agent.dispose();
+		const bytes = await Bun.file(sessionFile).text();
+		const before = await fs.promises.stat(sessionFile);
+		const restarted = harness.createAgent();
+		try {
+			for (const params of [{}, { cwd: harness.cwdB }]) {
+				const listed = await restarted.listSessions(params);
+				expect(listed.sessions?.map(session => session.sessionId)).toEqual([sessionId]);
+			}
+			const all = await restarted.extMethod("_omp/sessions/listAll", {});
+			expect(all.total).toBe(1);
+			const byCwd = await restarted.extMethod("_omp/chats/byCwd", { cwd: harness.cwdB });
+			expect((byCwd.sessions as Array<{ sessionId: string }>).map(session => session.sessionId)).toEqual([
+				sessionId,
+			]);
+			await restarted.loadSession({ sessionId, cwd: harness.cwdB, mcpServers: [] });
+			// Existing conversations retain OMP's recorded-cwd adoption policy.
+			expect(harness.sessions.at(-1)!.sessionManager.getCwd()).toBe(harness.cwdA);
+			await restarted.closeSession({ sessionId });
+			await fs.promises.rm(harness.cwdA, { recursive: true });
+			await restarted.resumeSession({ sessionId, cwd: harness.cwdB, mcpServers: [] });
+			const resumed = harness.sessions.at(-1)!;
+			expect(resumed.sessionId).toBe(sessionId);
+			expect(resumed.sessionManager.getCwd()).toBe(harness.cwdB);
+			expect(resumed.sessionManager.getSessionFile()).toBe(sessionFile);
+			await restarted.closeSession({ sessionId });
+			expect(await Bun.file(sessionFile).text()).toBe(bytes);
+			const after = await fs.promises.stat(sessionFile);
+			expect({ ino: after.ino, mtimeMs: after.mtimeMs }).toEqual({ ino: before.ino, mtimeMs: before.mtimeMs });
+		} finally {
+			await restarted.dispose();
+		}
+	});
+
+	it("keeps cwd-scoped and global default session listing when no directory is configured", async () => {
+		const harness = await createHarness();
+		try {
+			const first = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });
+			const second = await harness.agent.newSession({ cwd: harness.cwdB, mcpServers: [] });
+			const scoped = await harness.agent.listSessions({ cwd: harness.cwdA });
+			expect(scoped.sessions?.map(session => session.sessionId)).toEqual([first.sessionId]);
+			const global = await harness.agent.listSessions({});
+			expect(global.sessions?.map(session => session.sessionId).sort()).toEqual(
+				[first.sessionId, second.sessionId].sort(),
+			);
+		} finally {
+			await harness.agent.dispose();
+		}
+	});
+
+	it("excludes unrelated default-store sessions from explicit-store discovery and recovery", async () => {
+		const harness = await createHarness({
+			sessionDir: (_cwd, agentDir) => path.join(agentDir, "..", "selected-store"),
+		});
+		const selected = harness.sessions[0]!;
+		selected.sessionManager.appendMessage({ role: "user", content: "selected history", timestamp: Date.now() });
+		await selected.sessionManager.ensureOnDisk();
+		await selected.sessionManager.flush();
+		const unrelated = new FakeAgentSession(harness.cwdB);
+		unrelated.sessionManager.appendMessage({ role: "user", content: "other project history", timestamp: Date.now() });
+		await unrelated.sessionManager.ensureOnDisk();
+		await unrelated.sessionManager.flush();
+		const unrelatedFile = unrelated.sessionManager.getSessionFile()!;
+		await unrelated.dispose();
+		const unrelatedBytes = await Bun.file(unrelatedFile).text();
+		await harness.agent.dispose();
+		const restarted = harness.createAgent();
+		try {
+			const listed = await restarted.listSessions({ cwd: harness.cwdB });
+			expect(listed.sessions?.map(session => session.sessionId)).toEqual([selected.sessionId]);
+			const all = await restarted.extMethod("_omp/sessions/listAll", {});
+			expect((all.sessions as Array<{ sessionId: string }>).map(session => session.sessionId)).toEqual([
+				selected.sessionId,
+			]);
+			const projects = await restarted.extMethod("_omp/projects/list", {});
+			expect((projects.projects as Array<{ cwd: string }>).map(project => project.cwd)).toEqual([harness.cwdA]);
+			const byCwd = await restarted.extMethod("_omp/chats/byCwd", { cwd: harness.cwdB });
+			expect((byCwd.sessions as Array<{ sessionId: string }>).map(session => session.sessionId)).toEqual([
+				selected.sessionId,
+			]);
+			const params = { sessionId: unrelated.sessionId, cwd: harness.cwdB, mcpServers: [] };
+			await expect(restarted.loadSession(params)).rejects.toThrow("ACP session not found");
+			await expect(restarted.resumeSession(params)).rejects.toThrow("ACP session not found");
+			await expect(restarted.unstable_forkSession(params)).rejects.toThrow("ACP session not found");
+			expect(await Bun.file(unrelatedFile).text()).toBe(unrelatedBytes);
+		} finally {
+			await restarted.dispose();
+		}
+	});
+
 	it("supports multiple live ACP sessions with model and lifecycle handlers", async () => {
 		const harness = await createHarness();
 		const first = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });

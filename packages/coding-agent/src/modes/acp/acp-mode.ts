@@ -2,7 +2,7 @@ import * as stream from "node:stream";
 import { postmortem } from "@oh-my-pi/pi-utils";
 import { AgentSideConnection, ndJsonStream, type Stream } from "@oh-my-pi/pi-utils/acp";
 import type { AgentSession } from "../../session/agent-session";
-import { AcpAgent } from "./acp-agent";
+import { AcpAgent, type AcpAgentOptions } from "./acp-agent";
 
 /** Creates sessions requested by an ACP client. */
 export type AcpSessionFactory = (cwd: string) => Promise<AgentSession>;
@@ -13,16 +13,21 @@ export function createAcpConnection(
 	createSession: AcpSessionFactory,
 	initialSession?: AgentSession,
 	onAgent?: (agent: AcpAgent) => void,
+	options: AcpAgentOptions = {},
 ): AgentSideConnection {
 	return new AgentSideConnection(connection => {
-		const agent = new AcpAgent(connection, createSession, initialSession);
+		const agent = new AcpAgent(connection, createSession, initialSession, options);
 		onAgent?.(agent);
 		return agent;
 	}, transport);
 }
 
 /** Serves ACP over stdio until the peer disconnects, then awaits session teardown before exit. */
-export async function runAcpMode(createSession: AcpSessionFactory, initialSession?: AgentSession): Promise<void> {
+export async function runAcpMode(
+	createSession: AcpSessionFactory,
+	initialSession?: AgentSession,
+	options: AcpAgentOptions = {},
+): Promise<void> {
 	// Humans who run `omp acp` by hand see a silent process and assume it is
 	// broken (stdout is the JSON-RPC transport, so nothing may be printed
 	// there). When stdin is a TTY no ACP client is attached — say so on stderr
@@ -40,9 +45,15 @@ export async function runAcpMode(createSession: AcpSessionFactory, initialSessio
 	const input = stream.Writable.toWeb(process.stdout);
 	const output = stream.Readable.toWeb(process.stdin);
 	const transport = ndJsonStream(input, output);
-	const connection = createAcpConnection(transport, createSession, initialSession, createdAgent => {
-		agent = createdAgent;
-	});
+	const connection = createAcpConnection(
+		transport,
+		createSession,
+		initialSession,
+		createdAgent => {
+			agent = createdAgent;
+		},
+		options,
+	);
 	await connection.closed;
 	await postmortem.quit(0);
 }

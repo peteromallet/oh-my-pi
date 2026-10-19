@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- ACP session listing and recovery honor `--session-dir` without relocating an existing session store.
+- ACP session loading replays saved user messages with string content, including OMP 12 conversations.
+
 ## [17.4.0] - 2026-08-20
 
 ### Added
