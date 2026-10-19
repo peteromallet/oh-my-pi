@@ -77,6 +77,7 @@ import type { ExtensionUIContext } from "./extensibility/extensions/types";
 import { scheduleMarketplaceAutoUpdate } from "./extensibility/plugins/marketplace-auto-update";
 import { registerDaemonProjectPresence } from "./launch/presence";
 import type { MCPManager } from "./mcp";
+import type { AcpAgentOptions } from "./modes/acp/acp-agent";
 import type { InteractiveMode } from "./modes/interactive-mode";
 import type { PrintModeOptions } from "./modes/print-mode";
 import type { RpcModeOptions } from "./modes/rpc/rpc-mode";
@@ -185,7 +186,11 @@ import { cfgTaskAgentIdleTtlMs } from "./task/settings";
 import { cfgSkillsIncludeSkills } from "./extensibility/settings";
 import { cfgWorkspaceAdditionalDirectories } from "./session/context-settings";
 
-type RunAcpMode = (createSession: AcpSessionFactory) => Promise<never>;
+type RunAcpMode = (
+	createSession: AcpSessionFactory,
+	initialSession?: AgentSession,
+	options?: AcpAgentOptions,
+) => Promise<never>;
 type RunPrintMode = (session: AgentSession, options: PrintModeOptions) => Promise<number>;
 type RunRpcMode = (session: AgentSession, options?: RpcModeOptions) => Promise<never>;
 
@@ -2364,7 +2369,7 @@ export async function runRootCommand(
 			// Startup is over: stop recording spans, or every later session and subagent
 			// appends to the timing tree for the life of the server.
 			logger.endTiming();
-			await runAcpMode(createAcpSession);
+			await runAcpMode(createAcpSession, undefined, { sessionDir: parsedArgs.sessionDir });
 		} else {
 			// Resolve extension-registered CLI flags before creating the session so a
 			// bad `@file` fails fast WITHOUT leaving a junk session/breadcrumb

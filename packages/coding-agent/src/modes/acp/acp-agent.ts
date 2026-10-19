@@ -784,10 +784,16 @@ export function createAcpExtensionUiContext(
 	};
 }
 
+export interface AcpAgentOptions {
+	/** Use the same explicit store for creation, listing, and recovery. */
+	sessionDir?: string;
+}
+
 export class AcpAgent implements Agent {
 	#connection: AgentSideConnection;
 	#initialSession: AgentSession | undefined;
 	#createSession: CreateAcpSession;
+	#sessionDir: string | undefined;
 	#sessions = new Map<string, ManagedSessionRecord>();
 	#disposePromise: Promise<void> | undefined;
 	#cleanupRegistered = false;
@@ -795,10 +801,16 @@ export class AcpAgent implements Agent {
 	#cancelCleanupTimeoutMs = ACP_CANCEL_CLEANUP_TIMEOUT_MS;
 	#blobs = new BlobStore(getBlobsDir());
 
-	constructor(connection: AgentSideConnection, createSession: CreateAcpSession, initialSession?: AgentSession) {
+	constructor(
+		connection: AgentSideConnection,
+		createSession: CreateAcpSession,
+		initialSession?: AgentSession,
+		options: AcpAgentOptions = {},
+	) {
 		this.#connection = connection;
 		this.#initialSession = initialSession;
 		this.#createSession = createSession;
+		this.#sessionDir = options.sessionDir;
 	}
 
 	setCancelCleanupTimeoutForTesting(timeoutMs: number): void {
@@ -1419,7 +1431,7 @@ export class AcpAgent implements Agent {
 				return buildAcpSpeechModelsCatalog();
 			case "_omp/sessions/listAll": {
 				const limit = typeof params.limit === "number" ? Math.max(1, Math.min(5000, params.limit as number)) : 1000;
-				const sessions = await SessionManager.listAll();
+				const sessions = await this.#listStoredSessions();
 				const sorted = sessions.sort((l, r) => r.modified.getTime() - l.modified.getTime()).slice(0, limit);
 				return {
 					sessions: sorted.map(s => this.#toSessionInfo(s)),
@@ -1427,7 +1439,7 @@ export class AcpAgent implements Agent {
 				};
 			}
 			case "_omp/projects/list": {
-				const sessions = await SessionManager.listAll();
+				const sessions = await this.#listStoredSessions();
 				const buckets = new Map<
 					string,
 					{ cwd: string; sessionCount: number; lastActivityAt: number; lastTitle: string }
@@ -1458,7 +1470,7 @@ export class AcpAgent implements Agent {
 				const cwd = typeof params.cwd === "string" ? (params.cwd as string) : undefined;
 				if (!cwd) throw new Error("cwd required");
 				const limit = typeof params.limit === "number" ? Math.max(1, Math.min(500, params.limit as number)) : 100;
-				const sessions = await SessionManager.list(cwd);
+				const sessions = await this.#listStoredSessions(cwd);
 				const sorted = sessions.sort((l, r) => r.modified.getTime() - l.modified.getTime()).slice(0, limit);
 				return { sessions: sorted.map(s => this.#toSessionInfo(s)) };
 			}
@@ -2641,7 +2653,15 @@ export class AcpAgent implements Agent {
 	}
 
 	async #listStoredSessions(cwd?: string): Promise<StoredSessionInfo[]> {
-		const sessions = cwd ? await SessionManager.list(cwd) : await SessionManager.listAll();
+		// Resolving the default directory can migrate legacy stores. An explicit
+		// directory must remain authoritative, including before any live session
+		// exists and when recovering a session written under an older cwd.
+		const sessions =
+			this.#sessionDir !== undefined
+				? await SessionManager.list(cwd ?? process.cwd(), this.#sessionDir)
+				: cwd
+					? await SessionManager.list(cwd)
+					: await SessionManager.listAll();
 		return sessions.sort((left, right) => right.modified.getTime() - left.modified.getTime());
 	}
 
@@ -2912,7 +2932,9 @@ export class AcpAgent implements Agent {
 
 	#extractReplayContent(content: unknown, errorMessage: string | undefined): PromptRequest["prompt"] {
 		const replay: PromptRequest["prompt"] = [];
-		if (Array.isArray(content)) {
+		if (typeof content === "string" && content.length > 0) {
+			replay.push({ type: "text", text: content });
+		} else if (Array.isArray(content)) {
 			for (const item of content) {
 				if (typeof item !== "object" || item === null || !("type" in item)) {
 					continue;
