@@ -1,6 +1,6 @@
 # omp setup — fresh machine guide
 
-This fork (`peteromallet/oh-my-pi`, branch `dev`) is the single omp source for
+This fork (`peteromallet/oh-my-pi`, branch `astrid/18.12.6`) is the single omp source for
 the Arnold stack: the CLI runtime (run from this checkout) and the pinned
 `omp-rpc` Python client (referenced from Arnold's `pyproject.toml`).
 
@@ -13,13 +13,13 @@ the Arnold stack: the CLI runtime (run from this checkout) and the pinned
 ## 2. Clone + build omp
 
 ```bash
-git clone -b dev https://github.com/peteromallet/oh-my-pi.git ~/Documents/oh-my-pi
+git clone -b astrid/18.12.6 https://github.com/peteromallet/oh-my-pi.git ~/Documents/oh-my-pi
 cd ~/Documents/oh-my-pi
 bun install                       # install workspace deps (or: bun run setup)
 bun --cwd=packages/natives run build   # build pi_natives.<platform>-<arch>.node (required!)
 ln -s ~/Documents/oh-my-pi/packages/coding-agent/scripts/omp ~/.bun/bin/omp
 export PATH="$HOME/.bun/bin:$PATH"    # add to ~/.zshrc
-omp --version                     # expect omp/17.4.0
+omp --version                     # expect version 18.12.6
 ```
 
 The natives build is mandatory — `omp` fails at startup with
