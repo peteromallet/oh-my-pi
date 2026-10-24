@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import { renderWorkingMessage } from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
-import { initTheme, theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
 
 function escHint(): string {
 	return ` ${theme.format.bracketLeft}esc${theme.format.bracketRight}`;

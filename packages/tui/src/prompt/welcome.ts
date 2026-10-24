@@ -1,3 +1,4 @@
+import { ACTIVE_IDENTITY, type GradientPalette, type LogoCellOverride } from "./agent-identity";
 import { APP_NAME } from "@oh-my-pi/pi-utils/dirs";
 import type { TspSpan } from "@oh-my-pi/pi-wire";
 import { formatDoubleTap, formatKeyHint, formatKeyHints, type KeyName } from "../app-keybindings";
@@ -5,7 +6,7 @@ import { editorKey } from "../chrome/keybinding-hints";
 import { getKeybindings, type Keybinding } from "../keybindings";
 import { card, col, keyed, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeChild, NativeNode } from "../native/node";
-import { compactText, plainText } from "../native/spans";
+import { compactText, plainText, styledSpans } from "../native/spans";
 import { isNativeRendering } from "../native/state";
 import { isHyperlinkEnabled, urlHyperlink, urlLinkSpan } from "../render/hyperlink";
 import { TERMINAL } from "../terminal-capabilities";
@@ -13,6 +14,11 @@ import { theme } from "../theme/theme";
 import type { Component } from "../tui";
 import { padding, replaceTabs, visibleWidth, wrapTextWithAnsi } from "../utils";
 import tipsText from "./tips.txt" with { type: "text" };
+
+function overrideEscape(color: string): string {
+	const ansi256 = Bun.color(color, "ansi-256");
+	return ansi256 ?? "\x1b[38;2;255;255;255m";
+}
 
 /** Leading marker for a tip that pitches Tern: shown only while no TSP surface
  *  is live, since a live one means the user is already in Tern. */
@@ -245,21 +251,11 @@ export class WelcomeComponent implements Component {
 		const lockupRow = keyed(
 			row(
 				[
-					node(
-						"image",
-						{
-							builtin: "omp",
-							alt: APP_NAME,
-							w: 128,
-							role: "omp.welcome.logo",
-						},
-						undefined,
-						"logo",
-					),
+					keyed(logoNode(ACTIVE_IDENTITY.logo, true), "logo"),
 					keyed(
 						col(
 							[
-								art([span(APP_NAME, "strong")], "omp.welcome.wordmark"),
+								art([span(ACTIVE_IDENTITY.displayName ?? APP_NAME, "strong")], "omp.welcome.wordmark"),
 								art([span(`v${this.version}`, "dim mono")], "omp.welcome.version"),
 							],
 							{ role: "omp.welcome.mark" },
@@ -409,7 +405,7 @@ export class WelcomeComponent implements Component {
 }
 
 /** Block-grid brand mark shared by the welcome and setup surfaces. */
-export const PI_LOGO = ["████████████", "   ██  ██   ", "   ██  ██   ", "   ▒▒  ██   ", "       ██   "];
+export const PI_LOGO = ACTIVE_IDENTITY.logo;
 
 /** Columns of {@link PI_LOGO}. */
 const LOGO_WIDTH = Math.max(...PI_LOGO.map(row => row.length));
@@ -418,7 +414,7 @@ const LOGO_WIDTH = Math.max(...PI_LOGO.map(row => row.length));
  * The `omp` wordmark in half-blocks, set beside {@link PI_LOGO} from its second
  * row: the `p` descends into the fourth, the version takes the fifth.
  */
-const WORDMARK = ["▄▀▀▄ █▀▄▀▄ █▀▀▄", "▀▄▄▀ █ █ █ █▄▄▀", "           █"];
+const WORDMARK = [ACTIVE_IDENTITY.displayName ?? ACTIVE_IDENTITY.id, ACTIVE_IDENTITY.tagline];
 
 /** Columns of {@link WORDMARK}. */
 const WORDMARK_WIDTH = Math.max(...WORDMARK.map(row => row.length));
@@ -449,26 +445,21 @@ function centerBlock(lines: readonly string[], width: number): string[] {
 }
 
 /** The block-grid brand mark as accent lines; `shimmer` declares the terminal-clocked shine sweep. */
-export function logoNode(lines: readonly string[], shimmer: boolean): NativeNode {
+export function logoNode(
+	lines: readonly string[],
+	shimmer: boolean,
+	overrides = ACTIVE_IDENTITY.cellOverrides,
+): NativeNode {
+	lines = gradientLogo(lines, 0, undefined, ACTIVE_IDENTITY.gradient, overrides);
 	return col(
 		lines.map(line =>
-			text([span(line, "accent", shimmer ? { fx: "shimmer" } : undefined)], {
+			text(compactText(styledSpans(line).map(s => (shimmer ? { ...s, fx: "shimmer" as const } : s))), {
 				wrap: "none",
 			}),
 		),
 		{ align: "center", role: "omp.setup.logo" },
 	);
 }
-
-/** Multi-stop palette for the diagonal gradient. */
-const GRADIENT_STOPS: ReadonlyArray<readonly [number, number, number]> = [
-	[248, 79, 204], // oklch(0.7 0.24 340)
-	[147, 98, 244], // oklch(0.62 0.21 295)
-	[0, 219, 228], // oklch(0.81 0.14 200)
-];
-
-/** 256-color ramp fallback when truecolor isn't available. */
-const GRADIENT_RAMP_256 = [206, 170, 134, 99, 69, 74, 44];
 
 /** Half-width of the shine highlight band, expressed in gradient-t units. */
 const SHINE_HALF_WIDTH = 0.18;
@@ -486,13 +477,17 @@ export interface ShineConfig {
  * Shared by {@link gradientLogo} and the setup splash so both stay
  * color-identical (truecolor when available, 256-color ramp otherwise).
  */
-export function gradientEscape(t: number, shine?: ShineConfig): string {
+export function gradientEscape(
+	t: number,
+	shine?: ShineConfig,
+	palette: GradientPalette = ACTIVE_IDENTITY.gradient,
+): string {
 	const shineStrength = shine && shine.strength > 0 ? shine.strength : 0;
 	const shinePos = shine ? shine.pos : 0;
 	if (TERMINAL.trueColor) {
 		// 5-stop palette widens the visible color range and avoids the
 		// deep-blue valley a naive HSL lerp falls into.
-		const stops = GRADIENT_STOPS;
+		const stops = palette.stops;
 		const seg = t * (stops.length - 1);
 		const i = Math.min(stops.length - 2, Math.floor(seg));
 		const f = seg - i;
@@ -512,7 +507,7 @@ export function gradientEscape(t: number, shine?: ShineConfig): string {
 		}
 		return `\x1b[38;2;${Math.round(r)};${Math.round(g)};${Math.round(bl)}m`;
 	}
-	const ramp = GRADIENT_RAMP_256;
+	const ramp = palette.ramp256;
 	let idx = Math.min(ramp.length - 1, Math.max(0, Math.floor(t * (ramp.length - 1) + 0.5)));
 	if (shineStrength > 0) {
 		const dist = Math.abs(t - shinePos);
@@ -524,31 +519,43 @@ export function gradientEscape(t: number, shine?: ShineConfig): string {
 }
 
 /**
- * Apply a multi-stop diagonal gradient (top-left → bottom-right) plus an
+ * Apply a multi-stop diagonal gradient (bottom-left → top-right) plus an
  * optional sliding shine band across multi-line art. `phase` (0..1) shifts the
  * gradient along the diagonal, wrapping at 1. When `shine` is provided, a soft
  * white highlight is composited on top, centered at `shine.pos`.
  */
-export function gradientLogo(lines: readonly string[], phase = 0, shine?: ShineConfig): string[] {
+export function gradientLogo(
+	lines: readonly string[],
+	phase = 0,
+	shine?: ShineConfig,
+	palette: GradientPalette = ACTIVE_IDENTITY.gradient,
+	overrides?: readonly LogoCellOverride[],
+): string[] {
 	const reset = "\x1b[0m";
 	const rows = lines.length;
 	const cols = Math.max(...lines.map(l => l.length));
-	const xSpan = Math.max(1, cols - 1);
-	const ySpan = Math.max(1, rows - 1);
-	const normalizedPhase = ((phase % 1) + 1) % 1;
+	const overrideMap =
+		overrides && overrides.length > 0 ? new Map(overrides.map(o => [`${o.row}:${o.col}`, o] as const)) : undefined;
+	// span+1 so `base` stays strictly < 1: avoids the wrap-around at the
+	// far corner mapping back to t=0 (hot pink) on the resting frame.
+	const span = Math.max(1, cols + rows - 1);
 	return lines.map((line, y) => {
 		let result = "";
 		for (let x = 0; x < line.length; x++) {
 			const char = line[x];
+			const override = overrideMap?.get(`${y}:${x}`);
+			if (override) {
+				result += overrideEscape(override.color) + (override.char ?? char) + reset;
+				continue;
+			}
 			if (char === " ") {
 				result += char;
 				continue;
 			}
-			// SVG's (0,0) → (1,1) gradient projects both normalized axes
-			// equally: top-right and bottom-left land on the purple midpoint.
-			const base = (x / xSpan + y / ySpan) / 2;
-			const t = normalizedPhase === 0 ? base : (base + normalizedPhase) % 1;
-			result += gradientEscape(t, shine) + char + reset;
+			// Diagonal: bottom-left (x=0, y=rows-1) → top-right (x=cols-1, y=0)
+			const base = (x + (rows - 1 - y)) / span;
+			const t = (((base + phase) % 1) + 1) % 1;
+			result += gradientEscape(t, shine, palette) + char + reset;
 		}
 		return result;
 	});
@@ -578,11 +585,17 @@ function introLogoFrame(progress: number): string[] {
 	const phase = ((((1 - eased) * INTRO_SWEEPS) % 1) + 1) % 1;
 	const shinePos = (((progress * INTRO_SHINE_TRAVERSALS) % 1) + 1) % 1;
 	const shineStrength = (1 - eased) ** 1.5;
-	return gradientLogo(PI_LOGO, phase, {
-		strength: shineStrength,
-		pos: shinePos,
-	});
+	return gradientLogo(
+		PI_LOGO,
+		phase,
+		{
+			strength: shineStrength,
+			pos: shinePos,
+		},
+		ACTIVE_IDENTITY.gradient,
+		ACTIVE_IDENTITY.cellOverrides,
+	);
 }
 
 /** Resting gradient frame, cached for re-renders outside of the intro. */
-const REST_FRAME = gradientLogo(PI_LOGO, 0);
+const REST_FRAME = gradientLogo(PI_LOGO, 0, undefined, ACTIVE_IDENTITY.gradient, ACTIVE_IDENTITY.cellOverrides);

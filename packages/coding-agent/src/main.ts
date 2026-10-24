@@ -676,16 +676,20 @@ async function runInteractiveMode(
 		// setting needs the shared setup splash renderer.
 		const storedSetupVersion = cfgSetupVersion.get(settings);
 		setupWizard =
-			forceSetupWizard || storedSetupVersion < CURRENT_SETUP_VERSION || showStartupSplash || setupScenesOverride !== undefined
+			forceSetupWizard ||
+			storedSetupVersion < CURRENT_SETUP_VERSION ||
+			showStartupSplash ||
+			setupScenesOverride !== undefined
 				? await import("./modes/setup")
 				: undefined;
 		setupScenes = setupWizard
-			? (setupScenesOverride ?? await setupWizard.selectSetupScenes(storedSetupVersion, setupWizard.ALL_SCENES, mode, {
+			? (setupScenesOverride ??
+				(await setupWizard.selectSetupScenes(storedSetupVersion, setupWizard.ALL_SCENES, mode, {
 					resuming,
 					isTTY: process.stdin.isTTY && process.stdout.isTTY,
 					setupWizardEnabled: cfgStartupSetupWizard.get(settings),
 					force: forceSetupWizard,
-				}))
+				})))
 			: [];
 		playStartupSplash = showStartupSplash && setupScenes.length === 0;
 

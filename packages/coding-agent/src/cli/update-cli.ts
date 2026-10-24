@@ -2288,6 +2288,11 @@ export async function runUpdateCommand(opts: {
 	check: boolean;
 	channel?: UpdateChannel;
 }): Promise<void> {
+	if (APP_NAME !== "omp") {
+		console.error("This fork updates from source. Run scripts/sync-upstream.sh in its checkout.");
+		process.exitCode = 1;
+		return;
+	}
 	const ompPath = resolveOmpPath();
 	const manager = ompPath ? await managedInstallName(ompPath) : undefined;
 	if (manager) {

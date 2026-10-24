@@ -4,7 +4,7 @@ import { adjustHsv } from "@oh-my-pi/pi-utils/color";
 import { getCustomThemesDir } from "@oh-my-pi/pi-utils/dirs";
 import { isEnoent } from "@oh-my-pi/pi-utils/fs-error";
 import { detectColorMode, resolveThemeColors } from "./color";
-import { ACTIVE_IDENTITY } from "../components/agent-identity";
+import { ACTIVE_IDENTITY } from "../prompt/agent-identity";
 import darkThemeJson from "./dark.json" with { type: "json" };
 import { defaultThemes } from "./defaults";
 import lightThemeJson from "./light.json" with { type: "json" };
@@ -151,8 +151,9 @@ export function createTheme(themeJson: ThemeJson, options: CreateThemeOptions = 
 	const colorMode = mode ?? detectColorMode();
 	// Deep per-instance tint: identity themeColors merge over the active
 	// theme's palette before resolution, so every themed surface shifts.
-	const mergedColors =
-		ACTIVE_IDENTITY.themeColors ? { ...themeJson.colors, ...ACTIVE_IDENTITY.themeColors } : themeJson.colors;
+	const mergedColors = ACTIVE_IDENTITY.themeColors
+		? { ...themeJson.colors, ...ACTIVE_IDENTITY.themeColors }
+		: themeJson.colors;
 	const resolvedColors = resolveThemeColors(mergedColors, themeJson.vars);
 
 	if (colorBlindMode) {

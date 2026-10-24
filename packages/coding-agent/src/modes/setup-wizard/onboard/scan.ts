@@ -172,7 +172,7 @@ export default async function scanProvidersLive(): Promise<ScanEntry[]> {
 	const authStorage = await discoverAuthStorage();
 	let modelsYmlProviders: { id: string; hasApiKey: boolean }[] | undefined;
 	try {
-		const config = await ModelsConfigFile.loadOrDefaultAsync();
+		const config = await ModelsConfigFile.loadOrDefault();
 		modelsYmlProviders = Object.entries(config.providers ?? {}).map(([id, provider]) => ({
 			id,
 			hasApiKey: Boolean(provider.apiKey),
@@ -182,10 +182,13 @@ export default async function scanProvidersLive(): Promise<ScanEntry[]> {
 	}
 	return scanProviders({
 		registry: PROVIDER_REGISTRY,
-		auth: authStorage,
+		auth: {
+			hasAuth: id => authStorage.keys.source(id) !== undefined,
+			getCredentialOrigin: id => authStorage.keys.source(id),
+		},
 		// A provider's env-var NAME existing in the catalog proves nothing;
 		// only report env-ready when the variable is actually set.
-		envApiKeyName: (id) => {
+		envApiKeyName: id => {
 			const name = getEnvApiKeyName(id);
 			if (!name) return undefined;
 			const value = Bun.env[name];

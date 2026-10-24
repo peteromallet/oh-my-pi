@@ -6,7 +6,7 @@ import {
 	probeThenPersist,
 	preselectedEntry,
 } from "../src/modes/setup-wizard/onboard/scenes";
-import { initTheme, theme } from "../src/modes/theme/theme";
+import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
 
 function entry(overrides: Partial<ScanEntry> & { provider: string }): ScanEntry {
 	return { status: "missing", origin: null, defaultModel: null, ...overrides };
@@ -126,8 +126,6 @@ describe("authKindForEntry routing", () => {
 	});
 });
 
-
-
 describe("probeThenPersist ordering [GateFB2r]", () => {
 	it("persists only after verify resolves true, and skips persist on failure", async () => {
 		const order: string[] = [];
@@ -142,7 +140,7 @@ describe("probeThenPersist ordering [GateFB2r]", () => {
 			},
 		);
 		expect(persisted).toBe(true);
-		expect(order).toEqual( ["verify", "persist"]);
+		expect(order).toEqual(["verify", "persist"]);
 
 		order.length = 0;
 		const failed = await probeThenPersist(
@@ -161,10 +159,14 @@ describe("probeThenPersist ordering [GateFB2r]", () => {
 
 	it("rejects empty keys outright", async () => {
 		let verifyRan = false;
-		const ok = await probeThenPersist("", async () => {
-			verifyRan = true;
-			return true;
-		}, async () => {});
+		const ok = await probeThenPersist(
+			"",
+			async () => {
+				verifyRan = true;
+				return true;
+			},
+			async () => {},
+		);
 		expect(ok).toBe(false);
 		expect(verifyRan).toBe(false);
 	});

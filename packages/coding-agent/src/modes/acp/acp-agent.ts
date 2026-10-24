@@ -1662,7 +1662,7 @@ export class AcpAgent implements Agent {
 			}),
 		);
 		try {
-			const success = await session.switchSession(sourcePath);
+			const success = await session.switchSession(sourcePath, { preserveLocalCwd: this.#sessionDir !== undefined });
 			if (!success) {
 				throw new Error(`ACP session fork was cancelled: ${params.sessionId}`);
 			}
@@ -1689,7 +1689,7 @@ export class AcpAgent implements Agent {
 			}),
 		);
 		try {
-			const success = await session.switchSession(sessionPath);
+			const success = await session.switchSession(sessionPath, { preserveLocalCwd: this.#sessionDir !== undefined });
 			if (!success) {
 				throw new Error(`ACP session load was cancelled: ${sessionId}`);
 			}
@@ -3060,7 +3060,9 @@ export class AcpAgent implements Agent {
 					return { cancelled: result.cancelled };
 				},
 				switchSession: async sessionPath => {
-					const success = await record.session.switchSession(sessionPath);
+					const success = await record.session.switchSession(sessionPath, {
+						preserveLocalCwd: this.#sessionDir !== undefined,
+					});
 					return { cancelled: !success };
 				},
 				reload: async () => {

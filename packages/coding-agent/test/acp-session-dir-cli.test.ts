@@ -19,6 +19,11 @@ async function startCli(
 	await Bun.write(
 		extension,
 		`export default function(pi) {
+		pi.registerProvider("local-qualification", {
+			baseUrl: "http://127.0.0.1:1/v1", apiKey: "local-only", api: "openai-completions",
+			models: [{ id: "local-only", name: "Legacy local fixture", reasoning: false, input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, maxTokens: 64 }],
+		});
 		pi.registerProvider("session-dir-test", {
 			baseUrl: "http://127.0.0.1:1/v1", apiKey: "local-only", api: "openai-completions",
 			models: [{ id: "local", name: "Local session fixture", reasoning: false, input: ["text"],

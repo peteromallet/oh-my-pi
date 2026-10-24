@@ -1,6 +1,8 @@
+import { TERMINAL } from "../../terminal-capabilities";
+import { ACTIVE_IDENTITY, scaleCellOverrides } from "../../prompt/agent-identity";
 import { centerLine, visibleWidth } from "../../utils";
 import { padToWidth } from "../../render/utils";
-import { gradientEscape, gradientLogo, logoNode, PI_LOGO, type ShineConfig } from "../../prompt/welcome";
+import { gradientEscape, gradientLogo, logoNode, type ShineConfig } from "../../prompt/welcome";
 import { theme } from "../../theme/theme";
 import { formatKeyHint } from "../../app-keybindings";
 import { col, node, span, text } from "../../native/describe";
@@ -11,13 +13,14 @@ export const SETUP_SPLASH_MS = 2600;
 export const SETUP_TICK_MS = 33;
 
 /** Brand mark at 2x: every glyph doubled horizontally, every row doubled vertically. */
-const LARGE_LOGO = PI_LOGO.flatMap(line => {
+const LARGE_LOGO = ACTIVE_IDENTITY.logo.flatMap(line => {
 	let wide = "";
 	for (const char of line) {
 		wide += char === " " ? "  " : `${char}${char}`;
 	}
 	return [wide, wide];
 });
+const LARGE_OVERRIDES = scaleCellOverrides(ACTIVE_IDENTITY.cellOverrides);
 const LOGO_WIDTH = Math.max(...LARGE_LOGO.map(line => visibleWidth(line)));
 const LOGO_HEIGHT = LARGE_LOGO.length;
 const RESET = "\x1b[0m";
@@ -232,7 +235,15 @@ export function renderSetupSplash(width: number, height: number, elapsedMs: numb
 		for (const ch of line) {
 			const x = hx + col;
 			const y = hy + row;
-			if (ch !== " " && y >= 0 && y < h && x >= 0 && x < w) cells[y][x] = gradient(x, y) + ch + RESET;
+			const override = LARGE_OVERRIDES?.find(cell => cell.row === row && cell.col === col);
+			if (y >= 0 && y < h && x >= 0 && x < w) {
+				if (override)
+					cells[y][x] =
+						(Bun.color(override.color, TERMINAL.trueColor ? "ansi-16m" : "ansi-256") ?? "") +
+						(override.char ?? ch) +
+						RESET;
+				else if (ch !== " ") cells[y][x] = gradient(x, y) + ch + RESET;
+			}
 			col++;
 		}
 	});
@@ -262,8 +273,8 @@ export function describeSetupSplash(): NativeNode {
 		col(
 			[
 				node("spacer", { grow: 1 }),
-				logoNode(LARGE_LOGO, true),
-				text([span("O h   M y   P i", "strong")], { wrap: "none" }),
+				logoNode(LARGE_LOGO, true, LARGE_OVERRIDES),
+				text([span(ACTIVE_IDENTITY.tagline, "strong")], { wrap: "none" }),
 				node("spacer", { grow: 1 }),
 				text([span(hint, "dim")], { wrap: "none" }),
 			],
@@ -274,8 +285,18 @@ export function describeSetupSplash(): NativeNode {
 
 /** Centered fallback for windows too small to hold the full scene. */
 function renderCompactSplash(width: number, height: number, phase: number, shine: ShineConfig): string[] {
-	const art = height >= 14 ? LARGE_LOGO : PI_LOGO;
-	const content = [...gradientLogo(art, phase, shine), "", theme.bold("O h   M y   P i")];
+	const art = height >= 14 ? LARGE_LOGO : ACTIVE_IDENTITY.logo;
+	const content = [
+		...gradientLogo(
+			art,
+			phase,
+			shine,
+			ACTIVE_IDENTITY.gradient,
+			height >= 14 ? LARGE_OVERRIDES : ACTIVE_IDENTITY.cellOverrides,
+		),
+		"",
+		theme.bold(ACTIVE_IDENTITY.tagline),
+	];
 	const start = Math.max(0, Math.floor((height - content.length) / 2));
 	const lines: string[] = [];
 	for (let y = 0; y < height; y++) {

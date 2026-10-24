@@ -1,3 +1,5 @@
+import { KeybindingsManager } from "../app-keybindings";
+import { appKey } from "../chrome/keybinding-hints";
 import type { Component } from "../tui";
 import { getProjectDir } from "@oh-my-pi/pi-utils";
 import { highlightCode, type Theme } from "../theme/theme";
@@ -256,6 +258,7 @@ export interface ShellRendererConfig<TArgs> {
 	resolveCwd?: (args: TArgs | undefined) => string | undefined;
 	resolveEnv?: (args: TArgs | undefined) => Record<string, unknown> | undefined;
 	showHeader?: boolean;
+	runningHint?: (args: TArgs | undefined, options: RenderResultOptions) => string | undefined;
 }
 
 function getPartialJson<TArgs>(args: TArgs | undefined): string | undefined {
@@ -472,6 +475,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 								uiTheme,
 							);
 				const elapsedMs = options.executionStarted ? options.elapsedMs : undefined;
+				const hint = options.spinnerFrame !== undefined ? config.runningHint?.(args, options) : undefined;
 				return {
 					header,
 					phase: options.spinnerFrame !== undefined ? "running" : "pending",
@@ -479,7 +483,14 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 						elapsedMs === undefined || elapsedMs < 1000
 							? undefined
 							: uiTheme.fg("dim", `elapsed ${formatDuration(Math.floor(elapsedMs / 1000) * 1000)}`),
-					sections: [{ content: capPreviewLines(cmdLines, uiTheme, { expanded: options.expanded }) }],
+					sections: [
+						{
+							content: [
+								...capPreviewLines(cmdLines, uiTheme, { expanded: options.expanded }),
+								...(hint ? [uiTheme.fg("dim", hint)] : []),
+							],
+						},
+					],
 				};
 			});
 		},
@@ -666,7 +677,11 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 						[
 							runInput(command, SHELL_INPUT),
 							started &&
-								runFoot({ state: options.cancelled ? "cancelled" : "running", elapsedMs: options.elapsedMs }),
+								runFoot({
+									state: options.cancelled ? "cancelled" : "running",
+									elapsedMs: options.elapsedMs,
+									facts: options.cancelled ? [] : [config.runningHint?.(args, options) ?? ""],
+								}),
 						],
 						{ key: "run" },
 					),
@@ -740,4 +755,9 @@ export const bashToolRenderer = createShellRenderer<BashRenderArgs>({
 	resolveCwd: args => args?.cwd,
 	resolveEnv: args => args?.env,
 	showHeader: false,
+	runningHint: args => {
+		const keys = KeybindingsManager.inMemory();
+		const background = args?.pty ? "" : appKey(keys, "app.background");
+		return `${appKey(keys, "app.interrupt")} interrupt${background ? ` · ${background} background` : ""}`;
+	},
 });

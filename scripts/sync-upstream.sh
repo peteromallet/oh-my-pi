@@ -4,6 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+if [ "${1:-}" != "--test-only" ]; then
 echo "── fetching upstream + origin"
 git fetch origin main
 git fetch upstream main 2>/dev/null || { echo "no 'upstream' remote; add: git remote add upstream https://github.com/can1357/oh-my-pi.git"; exit 1; }
@@ -20,17 +21,19 @@ if ! git merge --no-edit upstream/main; then
   exit 1
 fi
 
+fi
+
 echo "── typecheck + onboarding tests"
 cd packages/coding-agent
 bun run check:types || exit 1
 bun test test/onboard-scan.test.ts test/onboard-scene-items.test.ts test/onboard-models-yml.test.ts
 
+[ "${1:-}" = "--test-only" ] && exit 0
+
 echo "── rebuilding natives (only if rust sources changed) && binary"
 cd ../..
-if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -q "^packages/natives/"; then
+if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -Eq "^(packages/natives/|crates/|Cargo\.(toml|lock)|scripts/.*native)"; then
   bun --cwd=packages/natives run build
-  mkdir -p ~/.omp/natives/17.4.0
-  cp packages/natives/native/pi_natives.darwin-arm64.node ~/.omp/natives/17.4.0/
 fi
 cd packages/coding-agent && bun scripts/build-binary.ts
 

@@ -33,14 +33,12 @@ import {
 	visibleWidth,
 } from "@oh-my-pi/pi-tui";
 import { getAgentDir, postmortem } from "@oh-my-pi/pi-utils";
-import { copyToClipboard } from "../../../utils/clipboard";
-import { getSelectListTheme, theme } from "../../theme/theme";
-import { SETUP_TICK_MS } from "../scenes/splash";
-import type { SetupScene, SetupSceneController, SetupSceneHost } from "../scenes/types";
+import { getSelectListTheme, theme } from "@oh-my-pi/pi-tui/theme";
+import { SETUP_TICK_MS } from "@oh-my-pi/pi-tui/setup/scenes/splash";
+import type { SetupScene, SetupSceneController, SetupSceneHost } from "@oh-my-pi/pi-tui/setup/scenes/types";
 import { GROK_PROXY_DEFAULT_MODEL, wireCliProxyModelsYml } from "./models-yml";
 import scanProvidersLive, { RECOMMENDED_MODELS, type ScanEntry } from "./scan";
 import { redactSecrets, verifyCredential } from "./verify";
-
 
 /**
  * Regression-pinned contract [GateFB2r]: the strict probe MUST complete before
@@ -332,7 +330,7 @@ class OnboardWireVerifyController implements SetupSceneController {
 		this.#entry = session.selected ?? manualFallbackEntry();
 		this.#oauthProviderIds = new Set(getOAuthProviders().map(provider => provider.id));
 		this.#kind = authKindForEntry(this.#entry, this.#oauthProviderIds);
-		this.#authStorage = host.ctx.session.modelRegistry.authStorage;
+		this.#authStorage = host.ctx.authStorage;
 		this.#routeModel =
 			this.#entry.defaultModel ?? (this.#kind === "cli_proxy" ? GROK_PROXY_DEFAULT_MODEL : undefined);
 	}
@@ -508,24 +506,25 @@ class OnboardWireVerifyController implements SetupSceneController {
 		// next scan.
 		await probeThenPersist(
 			key,
-			() =>
-				new Promise<boolean>((resolve) => {
-					void this.#runVerify(
-						{ type: "api_key", apiKey: key },
-						async () => {
-							resolve(true);
-						},
-						{ deferSuccess: true },
-					);
-				}),
+			async () => {
+				let verified = false;
+				await this.#runVerify(
+					{ type: "api_key", apiKey: key },
+					async () => {
+						verified = true;
+					},
+					{ deferSuccess: true },
+				);
+				return verified;
+			},
 			async (): Promise<void> => {
 				try {
-					await this.#authStorage.set(this.#entry.provider, { type: "api_key", key });
+					await this.#authStorage.credentials.set(this.#entry.provider, { type: "api_key", key });
 				} catch (error) {
 					this.#fail(redactSecrets(error instanceof Error ? error.message : String(error), this.#secrets));
 					return;
 				}
-				await this.host.ctx.session.modelRegistry.refreshProvider(this.#entry.provider, "online");
+				await this.host.ctx.refreshProvider(this.#entry.provider);
 				// Success renders only after the credential is durably stored.
 				this.#succeed();
 			},
@@ -533,7 +532,7 @@ class OnboardWireVerifyController implements SetupSceneController {
 	}
 
 	async #verifyStoredCredential(): Promise<void> {
-		const apiKey = await this.#authStorage.peekApiKey(this.#entry.provider);
+		const apiKey = await this.#authStorage.keys.peek(this.#entry.provider);
 		if (!apiKey) {
 			this.#fail("No usable credential found for this provider.");
 			return;
@@ -744,7 +743,7 @@ class OnboardWireVerifyController implements SetupSceneController {
 		this.host.restoreFocus();
 		this.host.requestRender();
 		try {
-			await this.#authStorage.login(providerId as OAuthProvider, {
+			await this.#authStorage.oauth.login(providerId as OAuthProvider, {
 				signal: this.#loginAbort.signal,
 				onAuth: info => {
 					this.#authUrl = info.url;
@@ -767,10 +766,10 @@ class OnboardWireVerifyController implements SetupSceneController {
 			if (this.#disposed) return;
 			// Provider-scoped online refresh so the just-persisted credential is
 			// authoritative before the strict probe runs (#5780).
-			await this.host.ctx.session.modelRegistry.refreshProvider(providerId, "online");
+			await this.host.ctx.refreshProvider(providerId);
 			this.#loggingIn = undefined;
 			this.#loginAbort = undefined;
-			const apiKey = await this.#authStorage.peekApiKey(providerId);
+			const apiKey = await this.#authStorage.keys.peek(providerId);
 			if (!apiKey) {
 				this.#fail("Sign-in completed but no usable credential was stored.");
 				return;
@@ -798,7 +797,7 @@ class OnboardWireVerifyController implements SetupSceneController {
 		const url = this.#authUrl;
 		if (!url) return;
 		try {
-			await copyToClipboard(url);
+			await this.host.ctx.copyToClipboard(url);
 		} catch {
 			// Clipboard integration is best-effort; the full URL remains rendered below.
 		}

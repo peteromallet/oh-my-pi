@@ -304,7 +304,7 @@ describe("disposeTerminalTitleState", () => {
 		expect(titles.length).toBeGreaterThan(0);
 		for (const title of titles) {
 			expect(title).toContain("my-project");
-			expect(title).toMatch(/^π [-\\|/] my-project$/);
+			expect(title).toMatch(/^arnold [-\\|/] my-project$/);
 			expect(title).not.toContain("⠋");
 		}
 	});
@@ -333,7 +333,7 @@ describe("disposeTerminalTitleState", () => {
 		expect(titles.length).toBeGreaterThan(0);
 		for (const title of titles) {
 			expect(title).toContain("my-project");
-			expect(title).toMatch(/^π [○◔◑◕●] my-project$/);
+			expect(title).toMatch(/^arnold [○◔◑◕●] my-project$/);
 		}
 	});
 

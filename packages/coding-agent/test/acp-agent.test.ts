@@ -624,63 +624,63 @@ async function advanceBootstrapGuard(): Promise<void> {
 }
 
 describe("ACP agent", () => {
-	it.each([
-		"external",
-		"legacy",
-	] as const)("recovers an explicit %s session store after restart and cwd pruning without relocating its transcript", async kind => {
-		const harness = await createHarness({
-			sessionDir: (cwd, agentDir) =>
-				kind === "external"
-					? path.join(agentDir, "..", "external-sessions")
-					: path.join(
-							agentDir,
-							"sessions",
-							`--${path
-								.resolve(cwd)
-								.replace(/^[/\\]/, "")
-								.replace(/[/\\:]/g, "-")}--`,
-						),
-		});
-		const stored = harness.sessions[0]!;
-		stored.sessionManager.appendMessage({ role: "user", content: "preserved question", timestamp: Date.now() });
-		stored.sessionManager.appendMessage(makeAssistantMessage("preserved answer"));
-		await stored.sessionManager.ensureOnDisk();
-		await stored.sessionManager.flush();
-		const sessionId = stored.sessionId;
-		const sessionFile = stored.sessionManager.getSessionFile()!;
-		await harness.agent.dispose();
-		const bytes = await Bun.file(sessionFile).text();
-		const before = await fs.promises.stat(sessionFile);
-		const restarted = harness.createAgent();
-		try {
-			for (const params of [{}, { cwd: harness.cwdB }]) {
-				const listed = await restarted.listSessions(params);
-				expect(listed.sessions?.map(session => session.sessionId)).toEqual([sessionId]);
+	it.each(["external", "legacy"] as const)(
+		"recovers an explicit %s session store after restart and cwd pruning without relocating its transcript",
+		async kind => {
+			const harness = await createHarness({
+				sessionDir: (cwd, agentDir) =>
+					kind === "external"
+						? path.join(agentDir, "..", "external-sessions")
+						: path.join(
+								agentDir,
+								"sessions",
+								`--${path
+									.resolve(cwd)
+									.replace(/^[/\\]/, "")
+									.replace(/[/\\:]/g, "-")}--`,
+							),
+			});
+			const stored = harness.sessions[0]!;
+			stored.sessionManager.appendMessage({ role: "user", content: "preserved question", timestamp: Date.now() });
+			stored.sessionManager.appendMessage(makeAssistantMessage("preserved answer"));
+			await stored.sessionManager.ensureOnDisk();
+			await stored.sessionManager.flush();
+			const sessionId = stored.sessionId;
+			const sessionFile = stored.sessionManager.getSessionFile()!;
+			await harness.agent.dispose();
+			const bytes = await Bun.file(sessionFile).text();
+			const before = await fs.promises.stat(sessionFile);
+			const restarted = harness.createAgent();
+			try {
+				for (const params of [{}, { cwd: harness.cwdB }]) {
+					const listed = await restarted.listSessions(params);
+					expect(listed.sessions?.map(session => session.sessionId)).toEqual([sessionId]);
+				}
+				const all = await restarted.extMethod("_omp/sessions/listAll", {});
+				expect(all.total).toBe(1);
+				const byCwd = await restarted.extMethod("_omp/chats/byCwd", { cwd: harness.cwdB });
+				expect((byCwd.sessions as Array<{ sessionId: string }>).map(session => session.sessionId)).toEqual([
+					sessionId,
+				]);
+				await restarted.loadSession({ sessionId, cwd: harness.cwdB, mcpServers: [] });
+				// Existing conversations retain OMP's recorded-cwd adoption policy.
+				expect(harness.sessions.at(-1)!.sessionManager.getCwd()).toBe(harness.cwdA);
+				await restarted.closeSession({ sessionId });
+				await fs.promises.rm(harness.cwdA, { recursive: true });
+				await restarted.resumeSession({ sessionId, cwd: harness.cwdB, mcpServers: [] });
+				const resumed = harness.sessions.at(-1)!;
+				expect(resumed.sessionId).toBe(sessionId);
+				expect(resumed.sessionManager.getCwd()).toBe(harness.cwdB);
+				expect(resumed.sessionManager.getSessionFile()).toBe(sessionFile);
+				await restarted.closeSession({ sessionId });
+				expect(await Bun.file(sessionFile).text()).toBe(bytes);
+				const after = await fs.promises.stat(sessionFile);
+				expect({ ino: after.ino, mtimeMs: after.mtimeMs }).toEqual({ ino: before.ino, mtimeMs: before.mtimeMs });
+			} finally {
+				await restarted.dispose();
 			}
-			const all = await restarted.extMethod("_omp/sessions/listAll", {});
-			expect(all.total).toBe(1);
-			const byCwd = await restarted.extMethod("_omp/chats/byCwd", { cwd: harness.cwdB });
-			expect((byCwd.sessions as Array<{ sessionId: string }>).map(session => session.sessionId)).toEqual([
-				sessionId,
-			]);
-			await restarted.loadSession({ sessionId, cwd: harness.cwdB, mcpServers: [] });
-			// Existing conversations retain OMP's recorded-cwd adoption policy.
-			expect(harness.sessions.at(-1)!.sessionManager.getCwd()).toBe(harness.cwdA);
-			await restarted.closeSession({ sessionId });
-			await fs.promises.rm(harness.cwdA, { recursive: true });
-			await restarted.resumeSession({ sessionId, cwd: harness.cwdB, mcpServers: [] });
-			const resumed = harness.sessions.at(-1)!;
-			expect(resumed.sessionId).toBe(sessionId);
-			expect(resumed.sessionManager.getCwd()).toBe(harness.cwdB);
-			expect(resumed.sessionManager.getSessionFile()).toBe(sessionFile);
-			await restarted.closeSession({ sessionId });
-			expect(await Bun.file(sessionFile).text()).toBe(bytes);
-			const after = await fs.promises.stat(sessionFile);
-			expect({ ino: after.ino, mtimeMs: after.mtimeMs }).toEqual({ ino: before.ino, mtimeMs: before.mtimeMs });
-		} finally {
-			await restarted.dispose();
-		}
-	});
+		},
+	);
 
 	it("keeps cwd-scoped and global default session listing when no directory is configured", async () => {
 		const harness = await createHarness();

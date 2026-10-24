@@ -15,7 +15,7 @@ import type {
 	ToolApprovalDecision,
 	ToolTier,
 } from "@oh-my-pi/pi-agent-core";
-import { getKeybindings } from "@oh-my-pi/pi-tui";
+import { KeybindingsManager } from "@oh-my-pi/pi-tui/app-keybindings";
 import { appKey } from "@oh-my-pi/pi-tui/chrome/keybinding-hints";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { PipeStreams } from "@oh-my-pi/pi-natives";
@@ -1300,7 +1300,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 			// transition, no message involved. The key label is resolved from
 			// the live keybinding so a remapped action reads correctly. The
 			// notice teaches the model how to re-follow the job if needed.
-			const backgroundKey = appKey(getKeybindings(), "app.background") || "the background key";
+			const backgroundKey = appKey(KeybindingsManager.inMemory(), "app.background") || "the background key";
 			const notices =
 				waitResult.kind === "steer"
 					? [...job.notices, "Backgrounded early to handle an incoming message; the command keeps running."]

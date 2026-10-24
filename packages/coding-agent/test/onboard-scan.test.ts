@@ -121,9 +121,7 @@ describe("scanProviders status logic", () => {
 	});
 
 	it("does NOT report models.yml providers without an apiKey as ready", () => {
-		const entries = scanProviders(
-			makeDeps({ modelsYmlProviders: [{ id: "fireworks", hasApiKey: false }] }),
-		);
+		const entries = scanProviders(makeDeps({ modelsYmlProviders: [{ id: "fireworks", hasApiKey: false }] }));
 		const fireworks = entries.find(entry => entry.provider === "fireworks");
 		expect(fireworks?.status).toBe("missing");
 		expect(fireworks?.origin).toBeNull();

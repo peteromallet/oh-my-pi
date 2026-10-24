@@ -1,3 +1,4 @@
+import { ACTIVE_IDENTITY } from "@oh-my-pi/pi-tui/prompt/agent-identity";
 import { afterEach, beforeAll, describe, expect, it, vi } from "bun:test";
 import { pickWeightedTip, WelcomeComponent } from "@oh-my-pi/pi-tui/prompt/welcome";
 import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
@@ -18,7 +19,7 @@ describe("WelcomeComponent", () => {
 			key: "lockup",
 			p: { role: "omp.welcome.lockup" },
 			c: [
-				{ k: "image", key: "logo" },
+				{ k: "col", key: "logo" },
 				{
 					k: "col",
 					p: { role: "omp.welcome.mark" },
@@ -87,8 +88,8 @@ describe("WelcomeComponent", () => {
 		const expectCentered = (left: number, right: number) => expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
 
 		// The lockup is one block: the logo's bar starts it, the wordmark row ends it.
-		const bar = rows.find(row => row.includes("████████████")) ?? "";
-		const word = rows.find(row => row.includes("▄▀▀▄")) ?? "";
+		const bar = rows.find(row => row.includes(ACTIVE_IDENTITY.logo[0].trim())) ?? "";
+		const word = rows.find(row => row.includes(ACTIVE_IDENTITY.displayName ?? ACTIVE_IDENTITY.id)) ?? "";
 		expectCentered(indent(bar), columns - visibleWidth(word));
 
 		// Each tip line centers on its own.
@@ -108,15 +109,23 @@ describe("WelcomeComponent", () => {
 		const rows = (columns: number) => new WelcomeComponent("1.0.0").render(columns).map(row => Bun.stripANSI(row));
 
 		// The lockup needs 12 logo + 4 gap + 15 wordmark columns inside the 2-column margin.
-		const fits = rows(33);
-		const word = fits.find(row => row.includes("▄▀▀▄"));
+		const minimum =
+			Math.max(...ACTIVE_IDENTITY.logo.map(line => visibleWidth(line))) +
+			4 +
+			Math.max(
+				visibleWidth(ACTIVE_IDENTITY.displayName ?? ACTIVE_IDENTITY.id),
+				visibleWidth(ACTIVE_IDENTITY.tagline),
+			) +
+			2;
+		const fits = rows(minimum);
+		const word = fits.find(row => row.includes(ACTIVE_IDENTITY.displayName ?? ACTIVE_IDENTITY.id));
 		const version = fits.find(row => row.includes("v1.0.0"));
-		expect(fits.some(row => row.includes("████████████"))).toBe(true);
-		expect(version?.indexOf("v1.0.0")).toBe(word?.indexOf("▄▀▀▄"));
+		expect(fits.some(row => row.includes(ACTIVE_IDENTITY.logo[0].trim()))).toBe(true);
+		expect(version?.indexOf("v1.0.0")).toBe(word?.indexOf(ACTIVE_IDENTITY.displayName ?? ACTIVE_IDENTITY.id));
 
-		const narrow = rows(32).join("\n");
-		expect(narrow).toContain("████████████");
-		expect(narrow).not.toContain("▄▀▀▄");
+		const narrow = rows(minimum - 1).join("\n");
+		expect(narrow).toContain(ACTIVE_IDENTITY.logo[0].trim());
+		expect(narrow).not.toContain(ACTIVE_IDENTITY.displayName ?? ACTIVE_IDENTITY.id);
 		expect(narrow).not.toContain("v1.0.0");
 	});
 });

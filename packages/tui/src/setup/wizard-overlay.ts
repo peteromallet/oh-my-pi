@@ -257,8 +257,10 @@ export class SetupWizardComponent implements Component, OverlayFocusOwner {
 				[
 					col(
 						[
-							logoNode(ACTIVE_IDENTITY.logo, false),
-							text([span(APP_NAME, "accent strong")], { wrap: "none" }),
+							...(ACTIVE_IDENTITY.logo.length <= 5 || this.ctx.ui.terminal.rows >= 30
+								? [logoNode(ACTIVE_IDENTITY.logo, false)]
+								: []),
+							text([span(ACTIVE_IDENTITY.displayName ?? APP_NAME, "accent strong")], { wrap: "none" }),
 							text([span(`Setup step ${this.#sceneIndex + 1} of ${this.scenes.length}`, "muted")], {
 								wrap: "none",
 							}),
@@ -289,7 +291,7 @@ export class SetupWizardComponent implements Component, OverlayFocusOwner {
 		);
 		const header = [
 			"",
-			...logo.map(line => centerLine(line, width)),
+			...(logo.length <= 5 || height >= 30 ? logo.map(line => centerLine(line, width)) : []),
 			centerLine(theme.bold(theme.fg("accent", ACTIVE_IDENTITY.displayName ?? APP_NAME)), width),
 			centerLine(theme.fg("muted", `Setup step ${this.#sceneIndex + 1} of ${this.scenes.length}`), width),
 			"",

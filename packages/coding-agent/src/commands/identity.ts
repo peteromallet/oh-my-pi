@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Args, Command } from "@oh-my-pi/pi-utils/cli";
 import { getAgentDir } from "@oh-my-pi/pi-utils";
@@ -23,6 +23,8 @@ export class IdentityCommand extends Command {
 			return;
 		}
 		const dir = join(getAgentDir(), "identities");
+		mkdirSync(dir, { recursive: true });
+		mkdirSync(join(getAgentDir(), "agents"), { recursive: true });
 		const path = join(dir, `${name}.json`);
 		if (!existsSync(path)) {
 			const key = name.toLowerCase();
@@ -41,7 +43,10 @@ export class IdentityCommand extends Command {
 				displayName: name[0].toUpperCase() + name.slice(1),
 				tagline: key.replace(/(.)/g, "$1 ").trim(),
 				logo: ["    ▄▄▄    ", "  ▄█████▄  ", " █████████ ", "  ▀█████▀  ", "    ▀▀▀    "],
-				gradient: { stops, ramp256: ramp },
+				gradient: {
+					stops: stops.map(hex => [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16))),
+					ramp256: ramp,
+				},
 			};
 			writeFileSync(path, `${JSON.stringify(identity, null, "\t")}\n`, { mode: 0o644 });
 			console.log(`Wrote ${path}`);
