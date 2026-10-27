@@ -6,9 +6,9 @@
  * outro. Unknown names fall back to the Oh My Pi face so third-party agents
  * inherit a sensible default instead of crashing.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { APP_NAME, getAgentDir } from "@oh-my-pi/pi-utils";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { APP_NAME, getAgentDir, isRecord, logger } from "@oh-my-pi/pi-utils";
 
 export interface GradientPalette {
 	/** Truecolor stops, bottom-left → top-right of the diagonal. */
@@ -32,6 +32,8 @@ export interface AgentIdentity {
 	id: string;
 	/** Human-facing name for chrome ("Astrid"), defaults to the id. */
 	displayName?: string;
+	/** One-cell mark for compact status/title chrome ("A" for Astrid). */
+	statusIcon?: string;
 	/** Spaced-out brand line under the mark ("O h   M y   P i"). */
 	tagline: string;
 	/** Standard-size mark (welcome sidebar, wizard header, outro). */
@@ -51,14 +53,9 @@ export interface AgentIdentity {
 export const PI_IDENTITY: AgentIdentity = {
 	id: "oh-my-pi",
 	displayName: "Oh My Pi",
+	statusIcon: "π",
 	tagline: "O h   M y   P i",
-	logo: [
-		"▀██████████▀",
-		" ╘██    ██  ",
-		"  ██    ██  ",
-		"  ██    ██  ",
-		" ▄██▄  ▄██▄ ",
-	],
+	logo: ["▀██████████▀", " ╘██    ██  ", "  ██    ██  ", "  ██    ██  ", " ▄██▄  ▄██▄ "],
 	gradient: {
 		stops: [
 			[255, 92, 200], // hot pink
@@ -78,12 +75,13 @@ export const PI_IDENTITY: AgentIdentity = {
 export const ARNOLD_IDENTITY: AgentIdentity = {
 	id: "arnold",
 	displayName: "Arnold",
+	statusIcon: "A",
 	tagline: "a r n o l d",
 	// Every line padded to the same width: renderers center each line
 	// independently, so ragged widths would break the composition's offsets.
 	logo: [
 		"       ▄▟█▙     ",
-		"     ▐█▘▀██▄   ",
+		"     ▐█▘▀██▄    ",
 		"    ▄████▛▀██▄  ",
 		"  ▄████████████▄",
 		" ▐██████████▀▀▀▘",
@@ -123,57 +121,117 @@ const REGISTRY: Readonly<Record<string, AgentIdentity>> = {
 	arnold: ARNOLD_IDENTITY,
 };
 
-/** Tolerant JSON shape for user-defined identities. */
-interface CustomIdentityFile {
-	displayName?: string;
-	tagline?: string;
-	logo?: readonly string[];
-	gradient?: GradientPalette;
-	cellOverrides?: readonly LogoCellOverride[];
+function isColor(value: unknown): value is string {
+	return typeof value === "string" && Bun.color(value, "hex") !== null;
 }
 
-/**
- * Load a user-defined identity from `<agentDir>/identities/<name>.json`.
- * Lets custom agent instances carry their own face without forking this
- * module: drop a JSON file, set OMP_AGENT_IDENTITY, done. Tolerant: anything
- * malformed or missing falls back to the caller's default.
- */
-function loadCustomIdentity(name: string): AgentIdentity | undefined {
+function isDisplayText(value: unknown): value is string {
+	return typeof value === "string" && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+}
+
+function isSingleGlyph(value: unknown): value is string {
+	return isDisplayText(value) && Array.from(value).length === 1;
+}
+
+function isColorByte(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 255;
+}
+
+function isGradient(value: unknown): value is GradientPalette {
+	return (
+		isRecord(value) &&
+		Array.isArray(value.stops) &&
+		value.stops.length >= 2 &&
+		value.stops.every(stop => Array.isArray(stop) && stop.length === 3 && stop.every(isColorByte)) &&
+		Array.isArray(value.ramp256) &&
+		value.ramp256.length > 0 &&
+		value.ramp256.every(isColorByte)
+	);
+}
+
+/** Both identity sources share validation; legacy home files need no id. */
+function parseIdentity(raw: unknown, name: string, requireId: boolean): AgentIdentity | undefined {
+	if (!isRecord(raw) || (requireId && raw.id !== name)) return undefined;
+	if (!Array.isArray(raw.logo) || raw.logo.length === 0 || !raw.logo.every(isDisplayText)) {
+		return undefined;
+	}
+	// Uniform width is mandatory: renderers center each line independently.
+	const width = raw.logo.reduce((max, line) => Math.max(max, line.length), 0);
+	if (width === 0) return undefined;
+	const logo: string[] = raw.logo.map(line => line.padEnd(width));
+	const cellOverrides: LogoCellOverride[] = [];
+	if (Array.isArray(raw.cellOverrides)) {
+		for (const cell of raw.cellOverrides) {
+			if (
+				!isRecord(cell) ||
+				typeof cell.row !== "number" ||
+				!Number.isInteger(cell.row) ||
+				cell.row < 0 ||
+				cell.row >= logo.length ||
+				typeof cell.col !== "number" ||
+				!Number.isInteger(cell.col) ||
+				cell.col < 0 ||
+				cell.col >= width ||
+				!isColor(cell.color) ||
+				(cell.char !== undefined && (!isDisplayText(cell.char) || cell.char.length !== 1))
+			) {
+				continue;
+			}
+			cellOverrides.push({ row: cell.row, col: cell.col, color: cell.color, char: cell.char });
+		}
+	}
+	// Theme values must be literal colors, not references into an arbitrary
+	// active theme's vars (which could be missing or circular).
+	const themeColors = isRecord(raw.themeColors)
+		? Object.fromEntries(
+				Object.entries(raw.themeColors).filter(
+					(entry): entry is [string, string] => entry[1] === "" || (isColor(entry[1]) && entry[1].startsWith("#")),
+				),
+			)
+		: undefined;
+	return {
+		id: name,
+		displayName: isDisplayText(raw.displayName) ? raw.displayName : undefined,
+		statusIcon: isSingleGlyph(raw.statusIcon) ? raw.statusIcon : undefined,
+		tagline: isDisplayText(raw.tagline) ? raw.tagline : name.replace(/(.)/g, "$1 ").trim(),
+		logo,
+		gradient: isGradient(raw.gradient) ? raw.gradient : PI_IDENTITY.gradient,
+		cellOverrides: cellOverrides.length > 0 ? cellOverrides : undefined,
+		themeColors,
+	};
+}
+
+/** Malformed or unavailable files fall through to the next identity source. */
+function loadIdentityFile(file: string, name: string, requireId = false): AgentIdentity | undefined {
 	try {
-		const path = join(getAgentDir(), "identities", `${name}.json`);
-		if (!existsSync(path)) return undefined;
-		const raw = JSON.parse(readFileSync(path, "utf8")) as CustomIdentityFile;
-		if (!Array.isArray(raw.logo) || raw.logo.length === 0 || !raw.logo.every(l => typeof l === "string")) {
-			return undefined;
-		}
-		let logo = raw.logo;
-		const widths = new Set(logo.map(l => l.length));
-		if (widths.size > 1) {
-			// Uniform width is mandatory: renderers center each line
-			// independently, so ragged widths break the composition.
-			const width = Math.max(...widths);
-			logo = logo.map(line => line + " ".repeat(width - line.length));
-		}
-		return {
-			id: name.toLowerCase(),
-			displayName: raw.displayName,
-			tagline: raw.tagline ?? name.replace(/(.)/g, "$1 ").trim(),
-			logo,
-			gradient: raw.gradient ?? PI_IDENTITY.gradient,
-			cellOverrides: raw.cellOverrides,
-		};
-	} catch {
+		if (!fs.statSync(file).isFile()) return undefined;
+		const identity = parseIdentity(JSON.parse(fs.readFileSync(file, "utf8")), name, requireId);
+		if (!identity) logger.debug("Ignoring invalid agent identity file", { path: file, identity: name });
+		return identity;
+	} catch (error) {
+		logger.debug("Unable to load agent identity file", { path: file, identity: name, error: String(error) });
 		return undefined;
 	}
 }
 
 /**
- * Resolve an agent identity by name: built-in registry, then a user-defined
- * `<agentDir>/identities/<name>.json`, then the Oh My Pi fallback.
+ * Resolve an identity: built-in registry, OMP_AGENT_IDENTITY_FILE (absolute
+ * regular file with a matching lowercase id), <agentDir>/identities/<name>.json,
+ * then the Oh My Pi fallback. Built-ins cannot be overridden by either file.
  */
 export function getAgentIdentity(name: string = APP_NAME): AgentIdentity {
 	const key = name.toLowerCase();
-	return REGISTRY[key] ?? loadCustomIdentity(key) ?? PI_IDENTITY;
+	if (Object.hasOwn(REGISTRY, key)) return REGISTRY[key];
+	const file = Bun.env.OMP_AGENT_IDENTITY_FILE;
+	if (file) {
+		if (path.isAbsolute(file)) {
+			const identity = loadIdentityFile(file, key, true);
+			if (identity) return identity;
+		} else {
+			logger.debug("Ignoring relative agent identity file", { path: file, identity: key });
+		}
+	}
+	return loadIdentityFile(path.join(getAgentDir(), "identities", `${key}.json`), key) ?? PI_IDENTITY;
 }
 
 /**
@@ -184,9 +242,7 @@ export function getAgentIdentity(name: string = APP_NAME): AgentIdentity {
 export const ACTIVE_IDENTITY: AgentIdentity = getAgentIdentity(Bun.env.OMP_AGENT_IDENTITY || APP_NAME);
 
 /** Expand standard-grid overrides to a doubled render (each cell -> 2x2). */
-export function scaleCellOverrides(
-	overrides: readonly LogoCellOverride[] | undefined,
-): LogoCellOverride[] | undefined {
+export function scaleCellOverrides(overrides: readonly LogoCellOverride[] | undefined): LogoCellOverride[] | undefined {
 	if (!overrides?.length) return undefined;
 	const scaled: LogoCellOverride[] = [];
 	for (const o of overrides) {

@@ -3,6 +3,7 @@ import type { Effort } from "@oh-my-pi/pi-ai";
 import { colorLuma, logger, relativeLuminance } from "@oh-my-pi/pi-utils";
 import chalk from "@oh-my-pi/pi-utils/chalk";
 import { bgAnsi, colorToAnsi, fgAnsi, resolveToHex } from "./color";
+import { ACTIVE_IDENTITY } from "../components/agent-identity";
 import type { ColorMode, ThemeBg, ThemeColor } from "./schema";
 import {
 	SPINNER_FRAMES,
@@ -518,7 +519,7 @@ export class Theme {
 			subscription: this.#symbols["icon.subscription"],
 			advisor: this.#symbols["icon.advisor"],
 			time: this.#symbols["icon.time"],
-			pi: this.#symbols["icon.pi"],
+			pi: ACTIVE_IDENTITY.statusIcon ?? this.#symbols["icon.pi"],
 			ghost: this.#symbols["icon.ghost"],
 			agents: this.#symbols["icon.agents"],
 			job: this.#symbols["icon.job"],
