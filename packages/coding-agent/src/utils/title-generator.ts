@@ -16,6 +16,7 @@ import {
 } from "@oh-my-pi/pi-ai";
 import { StreamMarkupHealing } from "@oh-my-pi/pi-ai/utils/stream-markup-healing";
 import { writeTerminalSequence } from "@oh-my-pi/pi-tui";
+import { ACTIVE_IDENTITY } from "@oh-my-pi/pi-tui/prompt/agent-identity";
 import { isNativeRendering, onNativeRenderingChange } from "@oh-my-pi/pi-tui/native/state";
 import { theme } from "@oh-my-pi/pi-tui/theme";
 import { SPINNER_FRAMES } from "@oh-my-pi/pi-tui/theme/symbols";
@@ -37,8 +38,8 @@ import { cfgRetryModelFallback } from "../session/settings";
 const TITLE_SYSTEM_PROMPT = prompt.render(titleSystemPrompt);
 const TITLE_MARKER_INSTRUCTION = prompt.render(titleMarkerInstruction);
 
-const DEFAULT_TERMINAL_TITLE = "arnold";
-const NATIVE_TERMINAL_TITLE = "arnold";
+const DEFAULT_TERMINAL_TITLE = ACTIVE_IDENTITY.id;
+const NATIVE_TERMINAL_TITLE = ACTIVE_IDENTITY.id;
 const TERMINAL_TITLE_CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 
 interface WindowsConsoleTitleApi {

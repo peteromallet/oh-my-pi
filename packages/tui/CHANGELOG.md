@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Product launchers can supply a packaged custom face through `OMP_AGENT_IDENTITY_FILE` without changing the user's global identities.
+
 ## [18.12.6] - 2026-10-21
 
 ### Changed

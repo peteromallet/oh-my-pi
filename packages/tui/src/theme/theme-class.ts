@@ -10,6 +10,7 @@ import {
 	type ThemeColor,
 } from "./schema";
 import type { SessionAccentTheme } from "./session-color";
+import { ACTIVE_IDENTITY } from "../prompt/agent-identity";
 import {
 	type SlashCommandIconName,
 	SPINNER_FRAMES,
@@ -638,7 +639,7 @@ export class Theme {
 			advisor: this.#symbols["icon.advisor"],
 			advisorClosed: this.#symbols["icon.advisorClosed"],
 			time: this.#symbols["icon.time"],
-			omp: this.#symbols["icon.omp"],
+			omp: ACTIVE_IDENTITY.statusIcon ?? this.#symbols["icon.omp"],
 			ghost: this.#symbols["icon.ghost"],
 			agents: this.#symbols["icon.agents"],
 			job: this.#symbols["icon.job"],
